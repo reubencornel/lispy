@@ -2,6 +2,20 @@
 name = "schemeProject"
 version = "0.1.0"
 authors = ["Reuben Cornel <reuben.cornel@gmail.com>"]
-edition = "2018"
 
 [dependencies]
+nom="5.0.0-beta3"
+tuple="0.4.2"
+rustyline="5.0.0"
+
+[[bin]]
+name="main"
+path="src/main.rs"
+
+[[bin]]
+name="main2"
+path="src/main2.rs"
+
+[[bin]]
+name="dogeparser"
+path="src/dogeparser.rs"
