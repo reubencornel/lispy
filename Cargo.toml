@@ -19,3 +19,7 @@ path="src/main2.rs"
 [[bin]]
 name="dogeparser"
 path="src/dogeparser.rs"
+
+[[bin]]
+name="polishNotation"
+path="src/polishNotation.rs"

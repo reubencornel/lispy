@@ -1,25 +1,26 @@
 extern crate nom;
 extern crate rustyline;
 
-use nom::IResult;
+use std::string::{String, ToString};
+
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::sequence::tuple;
 use nom::character::complete::space1;
-use std::string::{ToString, String};
-use nom::combinator::{cond, complete};
-use nom::multi::{many1, separated_list, many0};
-use nom::error::ErrorKind::Tag;
+use nom::combinator::{complete, cond};
 use nom::Err::Error;
+use nom::error::ErrorKind::Tag;
+use nom::IResult;
+use nom::multi::{many0, many1, separated_list};
+use nom::sequence::tuple;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
 fn adjective(input: &str) -> IResult<&str, &str> {
-    alt((tag("so"), tag("many"), tag("little"),tag("long"),tag("such"), tag("very"), tag("poor")))(input)
+    alt((tag("so"), tag("many"), tag("little"), tag("long"), tag("such"), tag("very"), tag("poor")))(input)
 }
 
 fn noun(input: &str) -> IResult<&str, &str> {
-    alt((tag("money"), tag("drink"), tag("doge"),tag("bork")))(input)
+    alt((tag("money"), tag("drink"), tag("doge"), tag("bork")))(input)
 }
 
 fn phrase(input: &str) -> IResult<&str, String> {
@@ -33,18 +34,17 @@ fn phrase(input: &str) -> IResult<&str, String> {
 }
 
 fn space_phrase(input: &str) -> IResult<&str, String> {
-    tuple((space1, phrase))(input).map(|x|{
+    tuple((space1, phrase))(input).map(|x| {
         let res = x.1;
         let mut concat_res = String::from(res.0.to_string());
         concat_res.push_str(&res.1);
         (x.0, concat_res)
-    } )
+    })
 }
 
 fn doge(input: &str) -> IResult<&str, String> {
     tuple((phrase, many0(space_phrase)))(input).map(|x| {
         let res = x.1;
-//        x.1 == (String, Vec<String>)
         let string_vec: Vec<String> = res.1;
         let mut ret_string0: String = res.0;
         let ret_string = string_vec.iter().fold(String::new(), |mut x, y| {
@@ -72,25 +72,25 @@ fn main() {
     rl.load_history("doge_history.txt");
 
     loop {
-        let readline  = rl.readline("doge >>");
+        let readline = rl.readline("doge >>");
         match readline {
-            Ok(line)=> {
+            Ok(line) => {
                 rl.add_history_entry(line.as_str());
-               if  doge(&line).is_ok() {
-                   println!("Much wow!!");
-               } else {
-                   println!("Such sad!!");
-               }
-            },
+                if doge(&line).is_ok() {
+                    println!("Much wow!!");
+                } else {
+                    println!("Such sad!!");
+                }
+            }
             Err(ReadlineError::Interrupted) => {
                 println!("Bye Fren!!");
                 break;
-            },
+            }
             Err(ReadlineError::Eof) => {
                 println!("Bye Fren!!");
                 break;
-            },
-            Err(err) =>{
+            }
+            Err(err) => {
                 println!("Why you do this, Fren??");
                 break;
             }
