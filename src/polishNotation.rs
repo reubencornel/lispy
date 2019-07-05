@@ -6,6 +6,7 @@ use std::iter::*;
 use std::process::exit;
 use std::vec::Vec;
 
+
 use nom::{IResult, ParseTo};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while};
@@ -18,43 +19,77 @@ use ::Expression::Int;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum OperatorEnum {
     ADD,
     SUB,
     MUL,
-    DIV
+    DIV,
+    MOD,
+    POW
 }
 
 
 trait Evaluatable<T> {
-    fn eval(&self) -> T;
+    fn eval(&self) -> Result<T, LispError>;
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 struct Integer {
     x: i64
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 enum Expression {
     Int(Integer),
     Operator(OperatorEnum, Vec<Expression>)
 }
 
+#[derive(PartialEq, Debug, Copy, Clone)]
+enum LispError {
+    DIV_BY_ZERO,
+    BAD_OP,
+    BAD_NUM
+}
+
 impl Evaluatable<Integer> for Expression {
-    fn eval(&self) -> Integer {
+    fn eval(&self) -> Result<Integer, LispError> {
         match self {
-            Expression::Int(x) => Integer{x: x.x},
+            Expression::Int(x) => Ok(Integer{x: x.x}),
             Expression::Operator(operator, exps ) => {
-                let integers: Vec<Integer> = exps.iter().map(|x| x.eval()).collect();
-                let value = match operator {
-                    OperatorEnum::ADD=> integers.iter().fold(0, |x, y| x + y.x),
-                    OperatorEnum::SUB=> integers.iter().fold(0, |x, y| x - y.x),
-                    OperatorEnum::MUL=> integers.iter().fold(1, |x, y| x * y.x),
-                    OperatorEnum::DIV=> integers.iter().fold(1, |x, y| x / y.x),
+                let argument_results: Vec<Result<Integer, LispError>> = exps.iter().map(|x| x.eval()).collect();
+                let func = |x: Result<Integer, LispError>, y: &Result<Integer, LispError>, f: fn(Integer, Integer) -> Result<Integer, LispError> | {
+                    if x.is_err() {
+                        x
+                    } else if y.is_err() {
+                        *y
+                    } else {
+                        f(x.unwrap(), y.unwrap())
+                    }
                 };
-                Integer {x: value}
+
+                match operator {
+                    OperatorEnum::ADD => argument_results[1..].iter().fold(argument_results[0], |x, y| {
+                        func(x, y, |a, b|  Ok(Integer{x:a.x+b.x}))
+                    }),
+                    OperatorEnum::DIV => argument_results[1..].iter().fold(argument_results[0], |x, y| {
+                        func(x, y, |a, b| {
+                            let x1: Option<i64> = a.x.checked_div(b.x);
+                            if x1.is_none() {
+                                Err(LispError::DIV_BY_ZERO)
+                            } else {
+                                Ok(Integer { x: x1.unwrap() })
+                            }
+                        })}),
+                    OperatorEnum::MUL => argument_results[1..].iter().fold(argument_results[0], |x, y| {
+                        func(x, y, |a, b|  Ok(Integer{x:a.x*b.x}))
+                    }),
+                    OperatorEnum::SUB => argument_results[1..].iter().fold(argument_results[0], |x, y| {
+                        func(x, y, |a, b|  Ok(Integer{x:a.x-b.x}))
+                    }),
+
+                    _ => unimplemented!()
+                }
             }
         }
     }
@@ -72,6 +107,8 @@ fn operator(input: &str) -> IResult<&str, OperatorEnum> {
         "-" => OperatorEnum::SUB,
         "*" => OperatorEnum::MUL,
         "/" => OperatorEnum::DIV,
+        "%" => OperatorEnum::MOD,
+        "^" => OperatorEnum::POW,
         _ => unimplemented!()
     }))
 }
@@ -141,15 +178,15 @@ mod test{
     fn int_test() {
         assert!(true);
         let x = Expression::Int(Integer{x:5});
-        assert_eq!(x.eval(), Integer{x:5});
+        assert_eq!(x.eval(), Ok(Integer{x:5}));
     }
 
     #[test]
     fn expression_test() {
         assert!(true);
-
+        let a: String = "a".to_string();
         let x = Expression::Operator(OperatorEnum::ADD, vec![Int(Integer{x:5}), Int(Integer{x:5})]);
-        assert_eq!(x.eval(), Integer{x:10});
+        assert_eq!(x.eval(), Ok(Integer{x:10}));
     }
 
     #[test]
