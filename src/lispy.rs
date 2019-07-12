@@ -92,6 +92,7 @@ fn parse(input: &str) -> IResult<&str, Vec<LispVal>> {
     lispy(input)
 }
 
+
 /* -----------------------  LISP -------------------------------*/
 
 fn eval(expr: &LispVal) -> Result<LispVal, LispVal> {
@@ -122,32 +123,39 @@ fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
     }
 
     let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e)).collect();
+    let argument_failure = argument_results.iter().find(|x| match x {
+        Ok(e) => false,
+        Err(e) => true
+    });
 
-    match symbol {
-        "+" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y|  {
-            number_function_eval(x,y, add_i64, add_f64)
-        }),
-        "-" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y|  {
-            number_function_eval(x,y, sub_i64, sub_f64)
-        }),
-        "*" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y|  {
-            number_function_eval(x,y, mul_i64, mul_f64)
-        }),
-        "/" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y|  {
+    if argument_failure.is_some() {
+        argument_failure.unwrap().clone()
+    } else {
+        match symbol {
+            "+" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
+                number_function_eval(x, y, add_i64, add_f64)
+            }),
+            "-" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
+                number_function_eval(x, y, sub_i64, sub_f64)
+            }),
+            "*" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
+                number_function_eval(x, y, mul_i64, mul_f64)
+            }),
+            "/" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
+                let divisor_is_zero = match y.clone().unwrap() {
+                    LispVal::Integer(z) => z == 0,
+                    LispVal::Float(z) => z == 0.0,
+                    _ => unimplemented!()
+                };
 
-            let divisor_is_zero = match y.clone().unwrap() {
-                LispVal::Integer(z) => z == 0,
-                LispVal::Float(z) => z == 0.0,
-                _ => unimplemented!()
-            };
-
-            if divisor_is_zero {
-                Err(LispVal::Err("Divide by zero".to_string()))
-            } else {
-                number_function_eval(x, y, div_i64, div_f64)
-            }
-        }),
-        _ => unimplemented!()
+                if divisor_is_zero {
+                    Err(LispVal::Err("Divide by zero".to_string()))
+                } else {
+                    number_function_eval(x, y, div_i64, div_f64)
+                }
+            }),
+            _ => unimplemented!()
+        }
     }
 }
 
@@ -323,7 +331,7 @@ mod test{
     fn testExprParsing() {
         let result = lispy("+ 123.12 12");
         println!("{:?}", result.is_err());
-        let (i, expr) = lispy("(/ 1 1 1 1)").unwrap();
+        let (i, expr) = lispy("(/ 1 1 (/ 1 0) 1)").unwrap();
         for e in expr {
             println!("{:?}", eval(&e));
         }
