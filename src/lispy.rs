@@ -13,6 +13,7 @@ use nom::multi::{many0, separated_list, separated_listc};
 use nom::sequence::tuple;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
+use ::LispVal::Qexpr;
 
 #[derive(PartialEq, Debug, Clone)]
 enum LispVal {
@@ -20,7 +21,8 @@ enum LispVal {
     Integer(i64),
     Symbol(String),
     Err(String),
-    Sexpr(Vec<LispVal>)
+    Sexpr(Vec<LispVal>),
+    Qexpr(Vec<LispVal>)
 }
 
 /* ----------------------------- PARSER ----------------------------------*/
@@ -68,8 +70,16 @@ fn sexpr(input: &str) -> IResult<&str, LispVal> {
     Ok((inp, LispVal::Sexpr(vec)))
 }
 
+fn qexpr(input: &str) -> IResult<&str, LispVal> {
+    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  expr, space1, separated_list(space1, expr), tag("}")))(input)?;
+    let mut vec: Vec<LispVal> = Vec::new();
+    vec.push(op);
+    vec.extend(nums.iter().cloned());
+    Ok((inp, LispVal::Qexpr(vec)))
+}
+
 fn expr(input: &str) -> IResult<&str, LispVal> {
-    let result = alt((number, symbol, sexpr))(input);
+    let result = alt((number, symbol, sexpr, qexpr))(input);
     result
 }
 
@@ -101,9 +111,13 @@ fn eval(expr: &LispVal) -> Result<LispVal, LispVal> {
         LispVal::Float(x) => Ok(LispVal::Float(x.clone())),
         LispVal::Symbol(sym) => Ok(LispVal::Symbol(sym.clone())),
         LispVal::Sexpr(elements) => eval_sexpr(elements),
+        LispVal::Qexpr(elements) => eval_qexpr(elements),
         LispVal::Err(message)=> Err(LispVal::Err(message.clone())),
         _ => unimplemented!()
     }
+}
+fn eval_qexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
+    Ok(LispVal::Qexpr(elements.iter().map(|x| x.clone()).collect()))
 }
 
 fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
@@ -206,7 +220,7 @@ fn number_function_eval(x: Result<LispVal, LispVal>, y: &Result<LispVal, LispVal
                         let y_clone = y.clone();
                         Ok(LispVal::Float(g(num as f64, y_clone)))
                     },
-                    _ => unimplemented!()
+                    _ => Err(LispVal::Err("Operation on unsupported type".to_string()))
                 }
             },
             LispVal::Float(x2) => {
@@ -220,7 +234,7 @@ fn number_function_eval(x: Result<LispVal, LispVal>, y: &Result<LispVal, LispVal
                         let y_clone = y.clone();
                         Ok(LispVal::Float(g(num, y_clone)))
                     },
-                    _ => unimplemented!()
+                    _ => Err(LispVal::Err("Operation on unsupported type".to_string()))
                 }
             },
             LispVal::Err(s) => Err(LispVal::Err(s.clone())),
@@ -236,6 +250,7 @@ fn print_val(expr: &LispVal) {
         LispVal::Err(message) => print!("Error: {}", message),
         LispVal::Symbol(x) => print!("{}", x),
         LispVal::Sexpr(elements) => print_sexprs(elements.to_vec(), "(", ")", true),
+        LispVal::Qexpr(elements) => print_sexprs(elements.to_vec(), "{", "}", true),
         _ => unimplemented!()
     }
 }
@@ -335,5 +350,7 @@ mod test{
         for e in expr {
             println!("{:?}", eval(&e));
         }
+
+        println!("{:?}", lispy("{1 2}"));
     }
 }
