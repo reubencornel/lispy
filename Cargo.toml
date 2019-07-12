@@ -23,3 +23,7 @@ path="src/dogeparser.rs"
 [[bin]]
 name="polishNotation"
 path="src/polishNotation.rs"
+
+[[bin]]
+name="lispy"
+path="src/lispy.rs"

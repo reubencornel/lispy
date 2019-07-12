@@ -12,7 +12,7 @@ use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while};
 use nom::character::{is_digit, is_space};
 use nom::character::complete::{digit1, space0, space1};
-use nom::multi::{many1, separated_list};
+use nom::multi::{many1, separated_list, many0};
 use nom::sequence::tuple;
 
 use ::Expression::Int;
@@ -35,13 +35,13 @@ trait Evaluatable<T> {
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
-struct Integer {
-    x: i64
+struct Number {
+    x: f64
 }
 
 #[derive(PartialEq, Debug, Clone)]
 enum Expression {
-    Int(Integer),
+    Int(Number),
     Operator(OperatorEnum, Vec<Expression>)
 }
 
@@ -52,13 +52,13 @@ enum LispError {
     BAD_NUM
 }
 
-impl Evaluatable<Integer> for Expression {
-    fn eval(&self) -> Result<Integer, LispError> {
+impl Evaluatable<Number> for Expression {
+    fn eval(&self) -> Result<Number, LispError> {
         match self {
-            Expression::Int(x) => Ok(Integer{x: x.x}),
+            Expression::Int(x) => Ok(Number {x: x.x}),
             Expression::Operator(operator, exps ) => {
-                let argument_results: Vec<Result<Integer, LispError>> = exps.iter().map(|x| x.eval()).collect();
-                let func = |x: Result<Integer, LispError>, y: &Result<Integer, LispError>, f: fn(Integer, Integer) -> Result<Integer, LispError> | {
+                let argument_results: Vec<Result<Number, LispError>> = exps.iter().map(|x| x.eval()).collect();
+                let func = |x: Result<Number, LispError>, y: &Result<Number, LispError>, f: fn(Number, Number) -> Result<Number, LispError> | {
                     if x.is_err() {
                         x
                     } else if y.is_err() {
@@ -70,22 +70,21 @@ impl Evaluatable<Integer> for Expression {
 
                 match operator {
                     OperatorEnum::ADD => argument_results[1..].iter().fold(argument_results[0], |x, y| {
-                        func(x, y, |a, b|  Ok(Integer{x:a.x+b.x}))
+                        func(x, y, |a, b|  Ok(Number {x:a.x+b.x}))
                     }),
                     OperatorEnum::DIV => argument_results[1..].iter().fold(argument_results[0], |x, y| {
                         func(x, y, |a, b| {
-                            let x1: Option<i64> = a.x.checked_div(b.x);
-                            if x1.is_none() {
+                            if b.x == 0.0 {
                                 Err(LispError::DIV_BY_ZERO)
                             } else {
-                                Ok(Integer { x: x1.unwrap() })
+                                Ok(Number{x: a.x/b.x})
                             }
                         })}),
                     OperatorEnum::MUL => argument_results[1..].iter().fold(argument_results[0], |x, y| {
-                        func(x, y, |a, b|  Ok(Integer{x:a.x*b.x}))
+                        func(x, y, |a, b|  Ok(Number {x:a.x*b.x}))
                     }),
                     OperatorEnum::SUB => argument_results[1..].iter().fold(argument_results[0], |x, y| {
-                        func(x, y, |a, b|  Ok(Integer{x:a.x-b.x}))
+                        func(x, y, |a, b|  Ok(Number {x:a.x-b.x}))
                     }),
 
                     _ => unimplemented!()
@@ -97,7 +96,7 @@ impl Evaluatable<Integer> for Expression {
 
 fn number(input: &str) -> IResult<&str, Expression>{
     let (inp, res) = digit1(input)?;
-    Ok((inp, Int(Integer{x: res.parse_to().unwrap()})))
+    Ok((inp, Int(Number {x: res.parse_to().unwrap()})))
 }
 
 fn operator(input: &str) -> IResult<&str, OperatorEnum> {
@@ -115,12 +114,16 @@ fn operator(input: &str) -> IResult<&str, OperatorEnum> {
 
 
 fn bracketed_expression(input: &str) -> IResult<&str, Expression> {
-    let (inp, (t, op, s, nums, t1)) = tuple((tag("("), operator, space1, separated_list(space1, expr), tag(")")))(input)?;
+    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("("),space0,  operator, space1, separated_list(space1, expr), tag(")")))(input)?;
     Ok((inp, Expression::Operator(op, nums)))
 }
 
 fn expr(input: &str) -> IResult<&str, Expression> {
     alt((number, bracketed_expression))(input)
+}
+
+fn lispy(input: &str) -> IResult<&str, Vec<Expression>> {
+    many0(expr)(input)
 }
 
 fn main() {
@@ -129,7 +132,7 @@ fn main() {
     rl.load_history("lisp_history.txt");
 
     loop {
-        let readline = rl.readline("lisp >>");
+        let readline = rl.readline("lisp> ");
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
@@ -162,12 +165,12 @@ mod test{
     use ::{bracketed_expression, expr};
     use ::Expression::Operator;
     use ::OperatorEnum::{ADD, MUL};
-    use operator;
+    use ::{operator, lispy};
 
     use super::Evaluatable;
     use super::Expression;
     use super::Expression::Int;
-    use super::Integer;
+    use super::Number;
 
     #[test]
     fn operator_test() {
@@ -177,16 +180,16 @@ mod test{
     #[test]
     fn int_test() {
         assert!(true);
-        let x = Expression::Int(Integer{x:5});
-        assert_eq!(x.eval(), Ok(Integer{x:5}));
+        let x = Expression::Int(Number {x:5.0});
+        assert_eq!(x.eval(), Ok(Number {x:5.0}));
     }
 
     #[test]
     fn expression_test() {
         assert!(true);
         let a: String = "a".to_string();
-        let x = Expression::Operator(OperatorEnum::ADD, vec![Int(Integer{x:5}), Int(Integer{x:5})]);
-        assert_eq!(x.eval(), Ok(Integer{x:10}));
+        let x = Expression::Operator(OperatorEnum::ADD, vec![Int(Number {x:5.0}), Int(Number {x:5.0})]);
+        assert_eq!(x.eval(), Ok(Number {x:10.0}));
     }
 
     #[test]
@@ -204,10 +207,19 @@ mod test{
     #[test]
     fn test_expr() {
         let (inp, exp) = expr("(+ 123 123)").unwrap();
-        assert_eq!(exp, Operator(ADD, vec![Int(Integer{x:123}), Int(Integer{x:123})]));
+        assert_eq!(exp, Operator(ADD, vec![Int(Number {x:123.0}), Int(Number {x:123.0})]));
 
         let (inp1, exp1) = expr("(+ 123 (* 123 1))").unwrap();
-        assert_eq!(exp1, Operator(ADD, vec![Int(Integer{x:123}), Operator(MUL, vec![Int(Integer{x:123}), Int(Integer{x:1})])]));
-        println!("{:#?}", exp1.eval());
+        assert_eq!(exp1, Operator(ADD, vec![Int(Number {x:123.0}), Operator(MUL, vec![Int(Number {x:123.0}), Int(Number {x:1.0})])]));
+    }
+
+    #[test]
+    fn test_lispy() {
+        let (inp, exps) = lispy("").unwrap();
+        assert_eq!(exps, vec![]);
+
+        let (_, exps) = lispy("(+ 1 2)").unwrap();
+        assert_eq!(exps.len(), 1);
+        assert_eq!(exps[0], Operator(ADD, vec![Int(Number{x:1.0}), Int(Number{x:2.0})]))
     }
 }
