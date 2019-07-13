@@ -44,7 +44,7 @@ fn float(input: &str) -> IResult<&str, LispVal> {
 
 
 fn symbol(input: &str) -> IResult<&str, LispVal> {
-    let result: IResult<&str, &str> = alt((tag("+"), tag("-"), tag("/"), tag("-")))(input);
+    let result: IResult<&str, &str> = alt((tag("+"), tag("-"), tag("/"), tag("-"), tag("list"), tag("head"), tag("tail"), tag("eval")))(input);
     let (i, symbol) = result?;
     Ok((i, LispVal::Symbol(symbol.to_string())))
 }
@@ -127,6 +127,10 @@ fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
             "-" => ("-", true),
             "*" => ("*", true),
             "/" => ("/", true),
+            "list" => ("list", true),
+            "head" => ("head", true),
+            "tail" => ("tail", true),
+            "eval" => ("eval", true),
             _ => ("", false)
         },
         _ => ("", false)
@@ -137,10 +141,7 @@ fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
     }
 
     let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e)).collect();
-    let argument_failure = argument_results.iter().find(|x| match x {
-        Ok(e) => false,
-        Err(e) => true
-    });
+    let argument_failure = has_failure(&argument_results);
 
     if argument_failure.is_some() {
         argument_failure.unwrap().clone()
@@ -168,11 +169,68 @@ fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
                     number_function_eval(x, y, div_i64, div_f64)
                 }
             }),
+            "list" => list(&argument_results),
+            "head" => head(&argument_results),
+            "tail" => tail(&argument_results),
+            "eval" => fn_eval(&argument_results),
             _ => unimplemented!()
         }
     }
 }
 
+fn has_failure(argument_results: &Vec<Result<LispVal, LispVal>>) -> Option<&Result<LispVal, LispVal>> {
+    argument_results.iter().find(|x| match x {
+        Ok(e) => false,
+        Err(e) => true
+    })
+}
+
+fn list(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    let failure = has_failure(argument_results);
+    if failure.is_some() {
+        failure.unwrap().clone()
+    } else {
+        Ok(LispVal::Qexpr(argument_results.iter().map(|x| x.clone().unwrap()).collect()))
+    }
+}
+
+fn head(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
+    let failure = has_failure(argument_results);
+    if failure.is_some() {
+        failure.unwrap().clone()
+    } else {
+        match argument_results[0].clone().unwrap() {
+            LispVal::Qexpr(elements) => Ok(elements[0].clone()),
+            _ =>         Ok(argument_results[0].clone().unwrap())
+        }
+    }
+}
+
+fn tail(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
+    let failure = has_failure(argument_results);
+    if failure.is_some() {
+        failure.unwrap().clone()
+    } else {
+        match argument_results[0].clone().unwrap() {
+            LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(elements[1..].iter().map(|x| x.clone()).collect())),
+            _ => Ok(LispVal::Qexpr(argument_results[1..].iter().map(|x| x.clone().unwrap()).collect()))
+        }
+    }
+}
+
+fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
+    let failure = has_failure(argument_results);
+    if failure.is_some() {
+        failure.unwrap().clone()
+    } else {
+        let val = match argument_results[0].clone().unwrap() {
+            LispVal::Qexpr(elements) => LispVal::Sexpr(elements),
+            LispVal::Sexpr(elements) => LispVal::Sexpr(elements),
+            _ => LispVal::Err("Unexpected type".to_string())
+        };
+        eval(&val)
+    }
+}
 fn div_i64(a: i64, b: i64) -> i64{
     a/b
 }
@@ -333,8 +391,6 @@ mod test{
 
         assert_eq!(unwrap_successful(number("12")), Integer(12));
         assert_eq!(unwrap_successful(number("-.12")), Float(-0.12));
-
-
     }
 
     fn unwrap_successful(x: IResult<&str, LispVal>) -> LispVal {
@@ -352,5 +408,10 @@ mod test{
         }
 
         println!("{:?}", lispy("{1 2}"));
+
+        let (i, expr) = lispy("(eval (head {(+ 1 2) (+ 10 20)}))").unwrap();
+        for e in expr {
+            println!("{:?}", eval(&e));
+        }
     }
 }
