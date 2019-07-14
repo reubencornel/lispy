@@ -1,11 +1,11 @@
 extern crate nom;
 extern crate rustyline;
+extern crate core;
 
 use std::cmp::min;
 
-use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{digit0, digit1, space0, space1};
+use nom::character::complete::{digit0, digit1, space0, space1, alphanumeric1, alphanumeric0};
 use nom::combinator::{complete, opt};
 use nom::error::ErrorKind;
 use nom::IResult;
@@ -14,15 +14,102 @@ use nom::sequence::tuple;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 use ::LispVal::Qexpr;
+use nom::branch::alt;
+use std::collections::HashMap;
+use rustyline::config::CompletionType::List;
+use std::fmt::Debug;
+use core::fmt;
 
-#[derive(PartialEq, Debug, Clone)]
 enum LispVal {
     Float(f64),
     Integer(i64),
     Symbol(String),
     Err(String),
     Sexpr(Vec<LispVal>),
-    Qexpr(Vec<LispVal>)
+    Qexpr(Vec<LispVal>),
+    Function(String, fn(&Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal>)
+}
+
+impl Clone for LispVal {
+    fn clone(&self) -> Self {
+        match self {
+            LispVal::Float(f) => LispVal::Float(f.clone()),
+            LispVal::Integer(i) => LispVal::Integer(i.clone()),
+            LispVal::Symbol(s) => LispVal::Symbol(s.clone()),
+            LispVal::Err(s) => LispVal::Err(s.clone()),
+            LispVal::Sexpr(exprs) => LispVal::Sexpr(exprs.clone()),
+            LispVal::Qexpr(exprs) => LispVal::Qexpr(exprs.clone()),
+            LispVal::Function(name, f) => LispVal::Function(name.clone(), *f),
+        }
+    }
+}
+
+impl PartialEq for LispVal{
+    fn eq(&self, other: &LispVal) -> bool {
+        match self {
+            LispVal::Float(f) => match other {
+                LispVal::Float(f1) => f == f1,
+                _ => false
+            },
+            LispVal::Integer(i) => match other {
+                LispVal::Integer(i1) => i == i1,
+                _ => false
+            },
+            LispVal::Err(i) => match other {
+                LispVal::Err(i1) => i == i1,
+                _ => false
+            },
+            LispVal::Symbol(i) => match other {
+                LispVal::Symbol(i1) => i == i1,
+                _ => false
+            },
+            LispVal::Sexpr(i) => match other {
+                LispVal::Sexpr(i1) => i == i1,
+                _ => false
+            },
+            LispVal::Qexpr(i) => match other {
+                LispVal::Qexpr(i1) => i == i1,
+                _ => false
+            },
+            LispVal::Function(i, f) => match other {
+                LispVal::Function(i1, f1) => i == i1,
+                _ => false
+            }
+        }
+    }
+}
+
+impl Debug for LispVal{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LispVal::Float(a) =>  write!(f, "Float({})", a),
+            LispVal::Integer(i) => write!(f, "Integer({})",i),
+            LispVal::Symbol(s) => write!(f, "Symbol({})",s),
+            LispVal::Err(s) => write!(f, "Err({})",s),
+            LispVal::Sexpr(exprs) => write!(f, "Sexpr({:?})",exprs),
+            LispVal::Qexpr(exprs) => write!(f, "Qexpr({:?})",exprs),
+            LispVal::Function(name,_) => write!(f, "Function({})",name),
+        }
+    }
+}
+
+struct Environment {
+    env: HashMap<String, LispVal>,
+}
+
+impl Environment {
+    pub fn new() -> Environment{
+        Environment{env : HashMap::new()}
+    }
+
+    pub fn get(&self, val: LispVal) -> Result<LispVal, LispVal> {
+        match val {
+            LispVal::Symbol(name) => {
+                unimplemented!()
+            },
+           _ => Err(LispVal::Err("Could not retrieve variable for type".to_string()))
+        }
+    }
 }
 
 /* ----------------------------- PARSER ----------------------------------*/
@@ -44,9 +131,9 @@ fn float(input: &str) -> IResult<&str, LispVal> {
 
 
 fn symbol(input: &str) -> IResult<&str, LispVal> {
-    let result: IResult<&str, &str> = alt((tag("+"), tag("-"), tag("/"), tag("-"), tag("list"), tag("head"), tag("tail"), tag("eval")))(input);
-    let (i, symbol) = result?;
-    Ok((i, LispVal::Symbol(symbol.to_string())))
+    let (inp, result):(&str, Vec<&str>) = many0(alt((tag("+"), tag("-"), tag("/"), tag("-"), alphanumeric1)))(input)?;
+    let i_name: Vec<String> = result.iter().map(|x| x.to_string()).collect();
+    Ok((inp, LispVal::Symbol(i_name.join(""))))
 }
 
 fn integer(input: &str) -> IResult<&str, LispVal> {
@@ -375,7 +462,7 @@ mod test{
     use ::{number, symbol};
     use ::{LispVal, lispy};
     use ::LispVal::{Float, Integer, Symbol};
-    use eval;
+    use ::{eval};
 
     #[test]
     fn testSimpleParsing() {
@@ -414,4 +501,5 @@ mod test{
             println!("{:?}", eval(&e));
         }
     }
+
 }
