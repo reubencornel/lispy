@@ -102,10 +102,20 @@ impl Environment {
         Environment{env : HashMap::new()}
     }
 
-    pub fn get(&self, val: LispVal) -> Result<LispVal, LispVal> {
+    pub fn put(&mut self, name_symbol: LispVal, val: LispVal) {
+        match name_symbol {
+            LispVal::Symbol(name) => self.env.insert(name, val),
+            _ => unimplemented!()
+        };
+    }
+
+    pub fn get(&self, val: &LispVal) -> Result<LispVal, LispVal> {
         match val {
             LispVal::Symbol(name) => {
-                unimplemented!()
+                match self.env.get(name) {
+                    Some(val) => Ok(val.clone()),
+                    None => Err(LispVal::Err(format!("Could not find value for symbol {}", name)))
+                }
             },
            _ => Err(LispVal::Err("Could not retrieve variable for type".to_string()))
         }
