@@ -9,7 +9,7 @@ use nom::character::complete::{digit0, digit1, space0, space1, alphanumeric1, al
 use nom::combinator::{complete, opt};
 use nom::error::ErrorKind;
 use nom::IResult;
-use nom::multi::{many0, separated_list, separated_listc};
+use nom::multi::{many0, separated_list, separated_listc, many1};
 use nom::sequence::tuple;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
@@ -117,7 +117,7 @@ impl Environment {
                     None => Err(LispVal::Err(format!("Could not find value for symbol {}", name)))
                 }
             },
-           _ => Err(LispVal::Err("Could not retrieve variable for type".to_string()))
+            _ => Err(LispVal::Err("Could not retrieve variable for type".to_string()))
         }
     }
 }
@@ -141,7 +141,7 @@ fn float(input: &str) -> IResult<&str, LispVal> {
 
 
 fn symbol(input: &str) -> IResult<&str, LispVal> {
-    let (inp, result):(&str, Vec<&str>) = many0(alt((tag("+"), tag("-"), tag("/"), tag("-"), alphanumeric1)))(input)?;
+    let (inp, result):(&str, Vec<&str>) = many1(alt((tag("+"), tag("*"), tag("/"), tag("-"), alphanumeric1)))(input)?;
     let i_name: Vec<String> = result.iter().map(|x| x.to_string()).collect();
     Ok((inp, LispVal::Symbol(i_name.join(""))))
 }
@@ -365,29 +365,30 @@ fn number_function_eval(x: Result<LispVal, LispVal>, y: &Result<LispVal, LispVal
     } else {
         match x.unwrap() {
             LispVal::Integer(x2) => {
-                let num = x2.clone();
-                match y.clone().unwrap() {
-                    LispVal::Integer(y) => {
-                        let y_clone = y.clone();
-                        Ok(LispVal::Integer(f(num, y_clone)))
+                let num = x2;
+                match y {
+                    Ok(val) => {
+                        match val {
+                            LispVal::Integer(y) => {
+                                Ok(LispVal::Integer(f(num, *y)))
+                            },
+                            LispVal::Float(y) => {
+                                Ok(LispVal::Float(g(num as f64, *y)))
+                            },
+                            _ => unimplemented!()
+                        }
                     },
-                    LispVal::Float(y) => {
-                        let y_clone = y.clone();
-                        Ok(LispVal::Float(g(num as f64, y_clone)))
-                    },
-                    _ => Err(LispVal::Err("Operation on unsupported type".to_string()))
+                    _ => unimplemented!()
                 }
             },
             LispVal::Float(x2) => {
-                let num = x2.clone();
+                let num = x2;
                 match y.clone().unwrap() {
                     LispVal::Integer(y) => {
-                        let y_clone = y.clone();
-                        Ok(LispVal::Float(g(num, y_clone as f64)))
+                        Ok(LispVal::Float(g(num, y as f64)))
                     },
                     LispVal::Float(y) => {
-                        let y_clone = y.clone();
-                        Ok(LispVal::Float(g(num, y_clone)))
+                        Ok(LispVal::Float(g(num, y)))
                     },
                     _ => Err(LispVal::Err("Operation on unsupported type".to_string()))
                 }
@@ -460,6 +461,8 @@ fn main() {
             }
         }
     }
+
+    let x = LispVal::Function("head".to_string(), head);
     rl.save_history("doge_history.txt");
 
 }
@@ -471,8 +474,9 @@ mod test{
     use ::{float, integer};
     use ::{number, symbol};
     use ::{LispVal, lispy};
-    use ::LispVal::{Float, Integer, Symbol};
+    use ::LispVal::{Float, Integer, Symbol, Sexpr};
     use ::{eval};
+    use std::any::Any;
 
     #[test]
     fn testSimpleParsing() {
@@ -498,18 +502,31 @@ mod test{
     #[test]
     fn testExprParsing() {
         let result = lispy("+ 123.12 12");
-        println!("{:?}", result.is_err());
-        let (i, expr) = lispy("(/ 1 1 (/ 1 0) 1)").unwrap();
-        for e in expr {
-            println!("{:?}", eval(&e));
-        }
+        assert!(result.is_ok());
+        let (remaining, lispVal) = result.unwrap();
+        assert_eq!(3, lispVal.len());
+        assert_eq!(LispVal::Symbol("+".to_string()), lispVal[0]);
+        assert_eq!(LispVal::Float(123.12), lispVal[1]);
+        assert_eq!(LispVal::Integer(12), lispVal[2]);
 
-        println!("{:?}", lispy("{1 2}"));
-
-        let (i, expr) = lispy("(eval (head {(+ 1 2) (+ 10 20)}))").unwrap();
-        for e in expr {
-            println!("{:?}", eval(&e));
-        }
+        let result = lispy("(/ 1 1 (/ 1 0) 1)");
+        assert!(result.is_ok());
+        let (remaining, lispVal) = result.unwrap();
+        assert_eq!(vec![Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(1), Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(0)]), Integer(1)])], lispVal);
     }
 
+    #[test]
+    fn eval_test() {
+        assert_eq!(Ok(Integer(3)), call_eval("(eval (head {(+ 1 2) (+ 10 20)}))"));
+        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1 0.2)"));
+        assert_eq!(Ok(Float(1.4)), call_eval("(+ 1.2 0.2)"));
+        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1.2 0)"));
+
+        assert_eq!( call_eval("(+ 1 1)"), Ok(Integer(2)));
+    }
+
+    fn call_eval(input: &str) -> Result<LispVal, LispVal> {
+        let (i, expr) = lispy(input).unwrap();
+        eval(&expr[0])
+    }
 }
