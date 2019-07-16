@@ -115,10 +115,10 @@ impl Environment {
             LispVal::Symbol(name) => {
                 match self.env.get(name) {
                     Some(val) => Ok(val.clone()),
-                    None => Err(LispVal::Err(format!("Could not find value for symbol {}", name)))
+                    None => error(format!("Could not find value for symbol {}", name))
                 }
             },
-            _ => Err(LispVal::Err("Could not retrieve variable for type".to_string()))
+            _ => error_str("Could not retrieve variable for type")
         }
     }
 }
@@ -200,6 +200,15 @@ fn parse(input: &str) -> IResult<&str, Vec<LispVal>> {
     lispy(input)
 }
 
+/* -----------------------  UTIL FUNCTIONS -------------------------------*/
+
+fn error(message: String) -> Result<LispVal, LispVal> {
+    Err(LispVal::Err(message))
+}
+
+fn error_str(message: &str) -> Result<LispVal, LispVal> {
+    error(message.to_string())
+}
 
 /* -----------------------  LISP -------------------------------*/
 
@@ -211,11 +220,11 @@ fn eval(expr: &LispVal, env: &mut Environment) -> Result<LispVal, LispVal> {
             let val = LispVal::Symbol(sym.clone());
             match env.get(&val) {
                 Ok(value) => Ok(value),
-                Err(value) => Err(LispVal::Err(format!("Symbol {} not found", sym).to_string()))
+                Err(value) => error(format!("Symbol {} not found", sym))
             }},
         LispVal::Sexpr(elements) => eval_sexpr(elements, env),
         LispVal::Qexpr(elements) => eval_qexpr(elements),
-        LispVal::Err(message)=> Err(LispVal::Err(message.clone())),
+        LispVal::Err(message)=> error(message.clone()),
         _ => unimplemented!()
     }
 }
@@ -231,13 +240,13 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: &mut Environment) -> Result<LispVal,
         _ => env.get(&elements[0])
     };
     match x {
-        Err(_) => Err(LispVal::Err("The first element of an sexpr should be a valid symbol".to_string())),
+        Err(_) => error_str("The first element of an sexpr should be a valid symbol"),
         Ok(value) => match value {
             LispVal::Function(name, funct) => {
                 let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env)).collect();
                 funct(&argument_results, env)
             },
-            _ => Err(LispVal::Err("Tried to evaluate a non function".to_string()))
+            _ =>  error_str(("Tried to evaluate a non function"))
         }
     }
 }
@@ -291,7 +300,7 @@ fn div(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) 
                          };
 
                          if divisor_is_zero {
-                             Err(LispVal::Err("Divide by zero".to_string()))
+                             error_str("Divide by zero")
                          } else {
                              number_function_eval(x, y, div_i64, div_f64)
                          }})},
@@ -320,6 +329,8 @@ fn tail(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)
                      }
                  }, env)
 }
+
+
 
 fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)-> Result<LispVal, LispVal> {
     safe_execute(argument_results,
@@ -394,11 +405,11 @@ fn number_function_eval(x: Result<LispVal, LispVal>, y: &Result<LispVal, LispVal
                     LispVal::Float(y) => {
                         Ok(LispVal::Float(g(num, y)))
                     },
-                    _ => Err(LispVal::Err("Operation on unsupported type".to_string()))
+                    _ => error_str("Operation on unsupported type")
                 }
             },
-            LispVal::Err(s) => Err(LispVal::Err(s.clone())),
-            _ => unimplemented!()
+            LispVal::Err(s) => error(s.clone()),
+            _ => error_str("Unexpected type for math operation")
         }
     }
 }
@@ -464,8 +475,6 @@ fn main() {
                 rl.add_history_entry(line.as_str());
                 match parse(&line) {
                     Ok((str, expr)) => {
-//                        let x1: Vec<LispVal> = expr.iter().map(|x| eval(x, &mut env)).map(|x| x.unwrap()).collect();
-//                        print_expr(&x1, false)
                         match eval(&expr[0], &mut env) {
                             Ok(value) => print_expr(&(vec![value]), false),
                             Err(value) => print_expr(&(vec![value]), false)
@@ -490,7 +499,7 @@ fn main() {
     }
 
     let x = LispVal::Function("head".to_string(), head);
-    rl.save_history("doge_history.txt");
+    rl.save_history("lisp_history.txt");
 
 }
 
