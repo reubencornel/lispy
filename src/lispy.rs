@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use rustyline::config::CompletionType::List;
 use std::fmt::Debug;
 use core::fmt;
+use rustyline::config::ColorMode::Enabled;
 
 enum LispVal {
     Float(f64),
@@ -238,42 +239,21 @@ fn eval_sexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
     }
 
     let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e)).collect();
-    let argument_failure = has_failure(&argument_results);
 
-    if argument_failure.is_some() {
-        argument_failure.unwrap().clone()
-    } else {
-        match symbol {
-            "+" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
-                number_function_eval(x, y, add_i64, add_f64)
-            }),
-            "-" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
-                number_function_eval(x, y, sub_i64, sub_f64)
-            }),
-            "*" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
-                number_function_eval(x, y, mul_i64, mul_f64)
-            }),
-            "/" => argument_results[1..].iter().fold(argument_results[0].clone(), |x, y| {
-                let divisor_is_zero = match y.clone().unwrap() {
-                    LispVal::Integer(z) => z == 0,
-                    LispVal::Float(z) => z == 0.0,
-                    _ => unimplemented!()
-                };
-
-                if divisor_is_zero {
-                    Err(LispVal::Err("Divide by zero".to_string()))
-                } else {
-                    number_function_eval(x, y, div_i64, div_f64)
-                }
-            }),
-            "list" => list(&argument_results),
-            "head" => head(&argument_results),
-            "tail" => tail(&argument_results),
-            "eval" => fn_eval(&argument_results),
-            _ => unimplemented!()
-        }
+    match symbol {
+        "+" => add(&argument_results),
+        "-" => sub(&argument_results),
+        "*" => mul(&argument_results),
+        "/" => div(&argument_results),
+        "list" => list(&argument_results),
+        "head" => head(&argument_results),
+        "tail" => tail(&argument_results),
+        "eval" => fn_eval(&argument_results),
+        _ => unimplemented!()
     }
+
 }
+
 
 fn has_failure(argument_results: &Vec<Result<LispVal, LispVal>>) -> Option<&Result<LispVal, LispVal>> {
     argument_results.iter().find(|x| match x {
@@ -282,51 +262,82 @@ fn has_failure(argument_results: &Vec<Result<LispVal, LispVal>>) -> Option<&Resu
     })
 }
 
-fn list(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+fn safe_execute(argument_results: &Vec<Result<LispVal, LispVal>>,f: fn(&Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal>) -> Result<LispVal, LispVal> {
     let failure = has_failure(argument_results);
     if failure.is_some() {
         failure.unwrap().clone()
     } else {
-        Ok(LispVal::Qexpr(argument_results.iter().map(|x| x.clone().unwrap()).collect()))
+        f(argument_results)
     }
+}
+
+fn add(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args| args[1..].iter().fold(args[0].clone(), |x, y| {
+                     number_function_eval(x, y, add_i64, add_f64) }))
+}
+
+fn sub(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args| args[1..].iter().fold(args[0].clone(), |x, y| {
+                     number_function_eval(x, y, sub_i64, sub_f64) }))
+}
+
+fn mul(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args| args[1..].iter().fold(args[0].clone(), |x, y| {
+                     number_function_eval(x, y, mul_i64, mul_f64)}))
+}
+
+fn div(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args| {
+                     args[1..].iter().fold(args[0].clone(), |x, y| {
+                         let divisor_is_zero = match y.clone().unwrap() {
+                             LispVal::Integer(z) => z == 0,
+                             LispVal::Float(z) => z == 0.0,
+                             _ => unimplemented!()
+                         };
+
+                         if divisor_is_zero {
+                             Err(LispVal::Err("Divide by zero".to_string()))
+                         } else {
+                             number_function_eval(x, y, div_i64, div_f64)
+                         }})})
+}
+
+fn list(argument_results: &Vec<Result<LispVal, LispVal>>) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results, |args: &Vec<Result<LispVal, LispVal>>|  Ok(LispVal::Qexpr(args.iter().map(|x| x.clone().unwrap()).collect())))
 }
 
 fn head(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
-    let failure = has_failure(argument_results);
-    if failure.is_some() {
-        failure.unwrap().clone()
-    } else {
-        match argument_results[0].clone().unwrap() {
+    safe_execute(argument_results, |args| {
+        match args[0].clone().unwrap() {
             LispVal::Qexpr(elements) => Ok(elements[0].clone()),
-            _ =>         Ok(argument_results[0].clone().unwrap())
-        }
-    }
+            _ =>  Ok(args[0].clone().unwrap())
+        }})
 }
 
 fn tail(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
-    let failure = has_failure(argument_results);
-    if failure.is_some() {
-        failure.unwrap().clone()
-    } else {
-        match argument_results[0].clone().unwrap() {
-            LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(elements[1..].iter().map(|x| x.clone()).collect())),
-            _ => Ok(LispVal::Qexpr(argument_results[1..].iter().map(|x| x.clone().unwrap()).collect()))
-        }
-    }
+    safe_execute(argument_results,
+                 |args| {
+                     match args[0].clone().unwrap() {
+                         LispVal::Qexpr(elements) => Ok(elements[0].clone()),
+                         _ => Ok(args[0].clone().unwrap())
+                     }
+                 })
 }
 
 fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>)-> Result<LispVal, LispVal> {
-    let failure = has_failure(argument_results);
-    if failure.is_some() {
-        failure.unwrap().clone()
-    } else {
-        let val = match argument_results[0].clone().unwrap() {
-            LispVal::Qexpr(elements) => LispVal::Sexpr(elements),
-            LispVal::Sexpr(elements) => LispVal::Sexpr(elements),
-            _ => LispVal::Err("Unexpected type".to_string())
-        };
-        eval(&val)
-    }
+    safe_execute(argument_results,
+                 |args: &Vec<Result<LispVal, LispVal>>| {
+                     let val = match args[0].clone().unwrap() {
+                         LispVal::Qexpr(elements) => LispVal::Sexpr(elements),
+                         LispVal::Sexpr(elements) => LispVal::Sexpr(elements),
+                         _ => LispVal::Err("Unexpected type".to_string())
+                     };
+                     eval(&val)
+                 })
 }
 fn div_i64(a: i64, b: i64) -> i64{
     a/b
@@ -430,6 +441,11 @@ fn print_sexprs(elements: Vec<LispVal>, opening: &str, closing: &str, recursive:
     }
 }
 
+fn build_env() -> Environment {
+    let mut environment = Environment::new();
+    unimplemented!()
+}
+
 
 fn main() {
     let mut rl = Editor::<()>::new();
@@ -474,7 +490,7 @@ mod test{
     use ::{float, integer};
     use ::{number, symbol};
     use ::{LispVal, lispy};
-    use ::LispVal::{Float, Integer, Symbol, Sexpr};
+    use ::LispVal::{Float, Integer, Symbol, Sexpr, Qexpr};
     use ::{eval};
     use std::any::Any;
 
@@ -523,6 +539,11 @@ mod test{
         assert_eq!(Ok(Float(1.2)), call_eval("(+ 1.2 0)"));
 
         assert_eq!( call_eval("(+ 1 1)"), Ok(Integer(2)));
+    }
+
+    #[test]
+    fn list_test() {
+        assert_eq!(call_eval("(list 123 123)"), Ok(Qexpr(vec![Integer(123), Integer(123)])))
     }
 
     fn call_eval(input: &str) -> Result<LispVal, LispVal> {
