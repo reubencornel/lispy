@@ -207,7 +207,12 @@ fn eval(expr: &LispVal, env: &mut Environment) -> Result<LispVal, LispVal> {
     match expr {
         LispVal::Integer(x) => Ok(LispVal::Integer(x.clone())),
         LispVal::Float(x) => Ok(LispVal::Float(x.clone())),
-        LispVal::Symbol(sym) => Ok(LispVal::Symbol(sym.clone())),
+        LispVal::Symbol(sym) => {
+            let val = LispVal::Symbol(sym.clone());
+            match env.get(&val) {
+                Ok(value) => Ok(value),
+                Err(value) => Err(LispVal::Err(format!("Symbol {} not found", sym).to_string()))
+            }},
         LispVal::Sexpr(elements) => eval_sexpr(elements, env),
         LispVal::Qexpr(elements) => eval_qexpr(elements),
         LispVal::Err(message)=> Err(LispVal::Err(message.clone())),
@@ -219,13 +224,19 @@ fn eval_qexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
 }
 
 fn eval_sexpr(elements: &Vec<LispVal>, env: &mut Environment) -> Result<LispVal, LispVal> {
-    match env.get(&elements[0]) {
+    let x = match &elements[0] {
+        LispVal::Sexpr(values) => {
+            eval_sexpr(values, env)
+        },
+        _ => env.get(&elements[0])
+    };
+    match x {
         Err(_) => Err(LispVal::Err("The first element of an sexpr should be a valid symbol".to_string())),
         Ok(value) => match value {
             LispVal::Function(name, funct) => {
                 let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env)).collect();
                 funct(&argument_results, env)
-            }
+            },
             _ => Err(LispVal::Err("Tried to evaluate a non function".to_string()))
         }
     }
@@ -314,9 +325,9 @@ fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environme
     safe_execute(argument_results,
                  |args: &Vec<Result<LispVal, LispVal>>, e| {
                      let val = match args[0].clone().unwrap() {
-                         LispVal::Qexpr(elements) => LispVal::Sexpr(elements),
+                         LispVal::Qexpr(elements) => LispVal::Qexpr(elements),
                          LispVal::Sexpr(elements) => LispVal::Sexpr(elements),
-                         _ => LispVal::Err("Unexpected type".to_string())
+                         v => v
                      };
                      eval(&val, e)
                  }, env)
@@ -400,7 +411,7 @@ fn print_val(expr: &LispVal) {
         LispVal::Symbol(x) => print!("{}", x),
         LispVal::Sexpr(elements) => print_sexprs(elements.to_vec(), "(", ")", true),
         LispVal::Qexpr(elements) => print_sexprs(elements.to_vec(), "{", "}", true),
-        _ => unimplemented!()
+        LispVal::Function(name, _) => print!("<function {}>", name)
     }
 }
 
@@ -453,8 +464,12 @@ fn main() {
                 rl.add_history_entry(line.as_str());
                 match parse(&line) {
                     Ok((str, expr)) => {
-                        let x1: Vec<LispVal> = expr.iter().map(|x| eval(x, &mut env)).map(|x| x.unwrap()).collect();
-                        print_expr(&x1, false)
+//                        let x1: Vec<LispVal> = expr.iter().map(|x| eval(x, &mut env)).map(|x| x.unwrap()).collect();
+//                        print_expr(&x1, false)
+                        match eval(&expr[0], &mut env) {
+                            Ok(value) => print_expr(&(vec![value]), false),
+                            Err(value) => print_expr(&(vec![value]), false)
+                        }
                     },
                     Err(error) => println!("Error {:?}", error),
                 }
@@ -489,7 +504,7 @@ mod test{
     use ::LispVal::{Float, Integer, Symbol, Sexpr, Qexpr};
     use ::{eval};
     use std::any::Any;
-    use build_env;
+    use ::{build_env, add};
 
     #[test]
     fn testSimpleParsing() {
@@ -529,7 +544,7 @@ mod test{
     }
 
     #[test]
-    fn eval_test() {
+    fn math_test() {
         assert_eq!(Ok(Integer(3)), call_eval("(eval (head {(+ 1 2) (+ 10 20)}))"));
         assert_eq!(Ok(Float(1.2)), call_eval("(+ 1 0.2)"));
         assert_eq!(Ok(Float(1.4)), call_eval("(+ 1.2 0.2)"));
@@ -541,6 +556,12 @@ mod test{
     #[test]
     fn list_test() {
         assert_eq!(call_eval("(list 123 123)"), Ok(Qexpr(vec![Integer(123), Integer(123)])))
+    }
+
+    #[test]
+    fn eval_test() {
+        assert_eq!(call_eval("(eval (head {+ - + - * /}))))"), Ok(LispVal::Function("+".to_string(), add)));
+        assert_eq!( call_eval("((eval (head {+ - + - * /})) 10 20)"), Ok(Integer(30)));
     }
 
     fn call_eval(input: &str) -> Result<LispVal, LispVal> {
