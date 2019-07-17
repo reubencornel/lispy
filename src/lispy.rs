@@ -13,7 +13,7 @@ use nom::multi::{many0, separated_list, separated_listc, many1};
 use nom::sequence::tuple;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
-use ::LispVal::Qexpr;
+use ::LispVal::{Qexpr, Sexpr, Symbol};
 use nom::branch::alt;
 use std::collections::HashMap;
 use rustyline::config::CompletionType::List;
@@ -161,7 +161,7 @@ fn number(input:  &str) -> IResult<&str, LispVal> {
 }
 
 fn sexpr(input: &str) -> IResult<&str, LispVal> {
-    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("("),space0,  expr, space1, separated_list(space1, expr), tag(")")))(input)?;
+    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("("),space0,  expr, space0, separated_list(space1, expr), tag(")")))(input)?;
     let mut vec: Vec<LispVal> = Vec::new();
     vec.push(op);
     vec.extend(nums.iter().cloned());
@@ -169,7 +169,7 @@ fn sexpr(input: &str) -> IResult<&str, LispVal> {
 }
 
 fn qexpr(input: &str) -> IResult<&str, LispVal> {
-    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  expr, space1, separated_list(space1, expr), tag("}")))(input)?;
+    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  expr, space0, separated_list(space1, expr), tag("}")))(input)?;
     let mut vec: Vec<LispVal> = Vec::new();
     vec.push(op);
     vec.extend(nums.iter().cloned());
@@ -324,13 +324,64 @@ fn tail(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)
     safe_execute(argument_results,
                  |args, e| {
                      match args[0].clone().unwrap() {
-                         LispVal::Qexpr(elements) => Ok(elements[0].clone()),
-                         _ => Ok(args[0].clone().unwrap())
+                         LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(elements[1..].iter().map(|x| x.clone()).collect())),
+                         _ => Ok(LispVal::Qexpr(args[1..].iter().map(|x| x.clone().unwrap()).collect()))
                      }
                  }, env)
 }
 
+fn isQexpr(val: &LispVal) -> bool{
+    match val {
+        Qexpr(_) => true,
+        _ => false
+    }
+}
 
+fn isSymbol(val: &LispVal) -> bool {
+    match val {
+        Symbol(_) => true,
+        _ => false
+    }
+}
+
+fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args, e| {
+                     // TODO reuben check the clone
+                     let values: Vec<LispVal> = args.iter().map(|x| x.clone().unwrap()).collect();
+                     if !isQexpr(&values[0]) {
+                         return error_str("Expected the first argument to the a Qexpr")
+                     }
+
+                     let mut count = 0;
+                     let all_symbols = match &values[0] {
+                         LispVal::Qexpr(values) => values.iter().map(|x|{
+                             count = count + 1;
+                             isSymbol(x)
+                         } ).fold(true, |x, y| x && y),
+                         _ => false
+                     };
+                     if !all_symbols {
+                         return error_str("All values of the first argument must be symbols")
+                     }
+
+                     if values.len() == count {
+                         return error_str("Number of symbols to values don't match")
+                     }
+
+                     count = 1;
+                     match &values[0] {
+                         LispVal::Qexpr(vs) => vs.iter().for_each(|x| {
+                             e.put(x.clone(), values[count].clone());
+                             count = count + 1;
+                         }),
+                         _ => ()
+                     };
+
+                     Ok(Sexpr(vec![]))
+                 }, env)
+
+}
 
 fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)-> Result<LispVal, LispVal> {
     safe_execute(argument_results,
@@ -459,7 +510,7 @@ fn build_env() -> Environment {
     add_to_env("head", head, &mut environment);
     add_to_env("tail", tail, &mut environment);
     add_to_env("eval", fn_eval, &mut environment);
-
+    add_to_env("def", def, &mut environment);
     environment
 }
 
@@ -514,6 +565,7 @@ mod test{
     use ::{eval};
     use std::any::Any;
     use ::{build_env, add};
+    use ::{def, error_str};
 
     #[test]
     fn testSimpleParsing() {
@@ -577,5 +629,24 @@ mod test{
         let (i, expr) = lispy(input).unwrap();
         let mut env = build_env();
         eval(&expr[0], &mut env)
+    }
+
+    #[test]
+    fn test_def() {
+        let argument_list = vec![Ok(LispVal::Sexpr(vec![]))];
+        assert_eq!( def(&argument_list, &mut (build_env())), error_str("Expected the first argument to the a Qexpr"));
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]))];
+        assert_eq!(def(&argument_list, &mut (build_env())), error_str("Number of symbols to values don't match"));
+
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Integer(10)])), Ok(LispVal::Integer(10))];
+        assert_eq!(def(&argument_list, &mut (build_env())), error_str("All values of the first argument must be symbols")); //, Ok(Sexpr(vec![])));
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())])), Ok(LispVal::Integer(10))];
+        let mut environment = build_env();
+        assert_eq!(def(&argument_list, &mut environment), Ok(Sexpr(vec![])));
+        let sym= LispVal::Symbol("a".to_string());
+        assert_eq!(environment.get(&sym), Ok(Integer(10)));
     }
 }
