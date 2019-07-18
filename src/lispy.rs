@@ -106,6 +106,7 @@ impl Debug for LispVal{
     }
 }
 
+#[derive(Clone, Debug)]
 struct Environment<'a> {
     env: RefCell<HashMap<String, LispVal>>,
     parent: Option<&'a Environment<'a>>
@@ -419,6 +420,7 @@ fn def_global_helper(argument_results: &Vec<Result<LispVal, LispVal>>, env: &Env
     match env.parent {
         Some(parent) => return def_global_helper(argument_results, parent),
         None => {
+            // This is ugly as hell
             let mut map = env.env.borrow_mut();
             let mut e: Environment = Environment::new();
             let result = def(argument_results, &mut e);
@@ -806,6 +808,36 @@ mod test{
 
         }
         assert_eq!(e1.get(&val), Ok(Integer(1)));
+
+    }
+
+    #[test]
+    fn test_environment_with_parent() {
+        let mut e1 = build_env();
+        let val = LispVal::Symbol("a".to_string());
+
+        {
+            let mut e2 = build_env_with_parent(&e1);
+            let mut e3 = build_env_with_parent(&e1);
+
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(1))];
+            def_global(&arguments, &mut e2);
+            assert_eq!(e2.get(&val), Ok(Integer(1)));
+            assert_eq!(e3.get(&val), Ok(Integer(1)));
+
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(2))];
+            def_global(&arguments, &mut e3);
+            assert_eq!(e2.get(&val), Ok(Integer(2)));
+            assert_eq!(e3.get(&val), Ok(Integer(2)));
+
+            let arguments = vec![get_argument_qexpr(vec!["b"]), Ok(Integer(3))];
+            let val1 = LispVal::Symbol("b".to_string());
+            def_local(&arguments, &mut e2);
+            assert_eq!(e2.get(&val1), Ok(Integer(3)));
+            assert_eq!(e1.get(&val1), error_str("Could not find value for symbol b"));
+            assert_eq!(e3.get(&val1),  error_str("Could not find value for symbol b"));
+        }
+        assert_eq!(e1.get(&val), Ok(Integer(2)));
 
     }
 }
