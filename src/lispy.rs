@@ -1,25 +1,26 @@
+extern crate core;
 extern crate nom;
 extern crate rustyline;
-extern crate core;
 
+use core::fmt;
 use std::cmp::min;
+use std::collections::HashMap;
+use std::fmt::Debug;
 
+use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{digit0, digit1, space0, space1, alphanumeric1, alphanumeric0};
+use nom::character::complete::{alphanumeric0, alphanumeric1, digit0, digit1, space0, space1};
 use nom::combinator::{complete, opt};
 use nom::error::ErrorKind;
 use nom::IResult;
-use nom::multi::{many0, separated_list, separated_listc, many1};
+use nom::multi::{many0, many1, separated_list, separated_listc};
 use nom::sequence::tuple;
+use rustyline::config::ColorMode::Enabled;
+use rustyline::config::CompletionType::List;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
+
 use ::LispVal::{Qexpr, Sexpr, Symbol};
-use nom::branch::alt;
-use std::collections::HashMap;
-use rustyline::config::CompletionType::List;
-use std::fmt::Debug;
-use core::fmt;
-use rustyline::config::ColorMode::Enabled;
 
 enum LispVal {
     Float(f64),
@@ -28,7 +29,8 @@ enum LispVal {
     Err(String),
     Sexpr(Vec<LispVal>),
     Qexpr(Vec<LispVal>),
-    Function(String, fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>)
+    BuiltInFunction(String, fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>),
+    UserDefinedFunction(Vec<LispVal>, Vec<LispVal>)
 }
 
 impl Clone for LispVal {
@@ -40,7 +42,8 @@ impl Clone for LispVal {
             LispVal::Err(s) => LispVal::Err(s.clone()),
             LispVal::Sexpr(exprs) => LispVal::Sexpr(exprs.clone()),
             LispVal::Qexpr(exprs) => LispVal::Qexpr(exprs.clone()),
-            LispVal::Function(name, f) => LispVal::Function(name.clone(), *f),
+            LispVal::BuiltInFunction(name, f) => LispVal::BuiltInFunction(name.clone(), *f),
+            LispVal::UserDefinedFunction(args, body) => LispVal::UserDefinedFunction(args.clone(), body.clone())
         }
     }
 }
@@ -72,8 +75,15 @@ impl PartialEq for LispVal{
                 LispVal::Qexpr(i1) => i == i1,
                 _ => false
             },
-            LispVal::Function(i, f) => match other {
-                LispVal::Function(i1, f1) => i == i1,
+            LispVal::BuiltInFunction(i, f) => match other {
+                LispVal::BuiltInFunction(i1, f1) => i == i1,
+                _ => false
+            },
+            LispVal::UserDefinedFunction(args, body) => match other {
+                LispVal::UserDefinedFunction(args1, body1) => {
+                    args.iter().zip(args1.iter()).map(|(x, y)| x == y).fold(true, |x, y| x && y)
+                        && body.iter().zip(body1.iter()).map(|(x, y)| x == y).fold(true, |x, y| x && y)
+                },
                 _ => false
             }
         }
@@ -89,7 +99,8 @@ impl Debug for LispVal{
             LispVal::Err(s) => write!(f, "Err({})",s),
             LispVal::Sexpr(exprs) => write!(f, "Sexpr({:?})",exprs),
             LispVal::Qexpr(exprs) => write!(f, "Qexpr({:?})",exprs),
-            LispVal::Function(name,_) => write!(f, "Function({})",name),
+            LispVal::BuiltInFunction(name, _) => write!(f, "Builtin Function({})", name),
+            LispVal::UserDefinedFunction(args, _) => write!(f, "Function {:?}", &args[0])
         }
     }
 }
@@ -168,6 +179,20 @@ fn sexpr(input: &str) -> IResult<&str, LispVal> {
     Ok((inp, LispVal::Sexpr(vec)))
 }
 
+fn func_parameter_qexpr(input: &str) -> IResult<&str, LispVal> {
+    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  symbol, space0, separated_list(space1, symbol), tag("}")))(input)?;
+    let mut vec: Vec<LispVal> = Vec::new();
+    vec.push(op);
+    vec.extend(nums.iter().cloned());
+    Ok((inp, LispVal::Qexpr(vec)))
+}
+
+
+fn lambda(input: &str) -> IResult<&str, LispVal> {
+    let (inp, (lmbda, s, args, s1,body)) = tuple((tag("\\"), space1, func_parameter_qexpr,space1, qexpr))(input)?;
+    Ok((inp, LispVal::UserDefinedFunction(vec![args], vec![body])))
+}
+
 fn qexpr(input: &str) -> IResult<&str, LispVal> {
     let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  expr, space0, separated_list(space1, expr), tag("}")))(input)?;
     let mut vec: Vec<LispVal> = Vec::new();
@@ -177,7 +202,7 @@ fn qexpr(input: &str) -> IResult<&str, LispVal> {
 }
 
 fn expr(input: &str) -> IResult<&str, LispVal> {
-    let result = alt((number, symbol, sexpr, qexpr))(input);
+    let result = alt((number, symbol, sexpr, qexpr, lambda))(input);
     result
 }
 
@@ -225,6 +250,7 @@ fn eval(expr: &LispVal, env: &mut Environment) -> Result<LispVal, LispVal> {
         LispVal::Sexpr(elements) => eval_sexpr(elements, env),
         LispVal::Qexpr(elements) => eval_qexpr(elements),
         LispVal::Err(message)=> error(message.clone()),
+        LispVal::UserDefinedFunction(args, body) => Ok(LispVal::UserDefinedFunction(args.clone(), body.clone())),
         _ => unimplemented!()
     }
 }
@@ -242,7 +268,7 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: &mut Environment) -> Result<LispVal,
     match x {
         Err(_) => error_str("The first element of an sexpr should be a valid symbol"),
         Ok(value) => match value {
-            LispVal::Function(name, funct) => {
+            LispVal::BuiltInFunction(name, funct) => {
                 let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env)).collect();
                 funct(&argument_results, env)
             },
@@ -330,14 +356,29 @@ fn tail(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)
                  }, env)
 }
 
-fn isQexpr(val: &LispVal) -> bool{
+fn join(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment)-> Result<LispVal, LispVal> {
+    safe_execute(argument_results,
+                 |args, e| {
+                     let mut return_val: Vec<LispVal> = vec![];
+                     for arg in args {
+                         match arg.clone().unwrap() {
+                             Qexpr(elements) => (&mut return_val).extend(elements.iter().cloned()),
+                             _ => return error_str("All elements to join expected to the Qexprs")
+                         }
+                     }
+                     Ok(Qexpr(return_val))
+                 }, env)
+}
+
+
+fn is_qexpr(val: &LispVal) -> bool{
     match val {
         Qexpr(_) => true,
         _ => false
     }
 }
 
-fn isSymbol(val: &LispVal) -> bool {
+fn is_symbol(val: &LispVal) -> bool {
     match val {
         Symbol(_) => true,
         _ => false
@@ -349,7 +390,7 @@ fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) 
                  |args, e| {
                      // TODO reuben check the clone
                      let values: Vec<LispVal> = args.iter().map(|x| x.clone().unwrap()).collect();
-                     if !isQexpr(&values[0]) {
+                     if !is_qexpr(&values[0]) {
                          return error_str("Expected the first argument to the a Qexpr")
                      }
 
@@ -357,7 +398,7 @@ fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) 
                      let all_symbols = match &values[0] {
                          LispVal::Qexpr(values) => values.iter().map(|x|{
                              count = count + 1;
-                             isSymbol(x)
+                             is_symbol(x)
                          } ).fold(true, |x, y| x && y),
                          _ => false
                      };
@@ -473,7 +514,8 @@ fn print_val(expr: &LispVal) {
         LispVal::Symbol(x) => print!("{}", x),
         LispVal::Sexpr(elements) => print_sexprs(elements.to_vec(), "(", ")", true),
         LispVal::Qexpr(elements) => print_sexprs(elements.to_vec(), "{", "}", true),
-        LispVal::Function(name, _) => print!("<function {}>", name)
+        LispVal::BuiltInFunction(name, _) => print!("<builtin function {}>", name),
+        LispVal::UserDefinedFunction(name, _) => print!("<user defined {}>", format!("{:?}", &name[0]))
     }
 }
 
@@ -499,7 +541,7 @@ fn print_sexprs(elements: Vec<LispVal>, opening: &str, closing: &str, recursive:
 fn build_env() -> Environment {
     let mut environment = Environment::new();
     let add_to_env =  |name: &str, value: fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>,e: &mut Environment|  {
-        e.put(LispVal::Symbol(name.to_string()), LispVal::Function(name.to_string(), value));
+        e.put(LispVal::Symbol(name.to_string()), LispVal::BuiltInFunction(name.to_string(), value));
     };
 
     add_to_env("+", add, &mut environment);
@@ -511,6 +553,7 @@ fn build_env() -> Environment {
     add_to_env("tail", tail, &mut environment);
     add_to_env("eval", fn_eval, &mut environment);
     add_to_env("def", def, &mut environment);
+    add_to_env("join", join, &mut environment);
     environment
 }
 
@@ -549,26 +592,27 @@ fn main() {
         }
     }
 
-    let x = LispVal::Function("head".to_string(), head);
+    let x = LispVal::BuiltInFunction("head".to_string(), head);
     rl.save_history("lisp_history.txt");
 
 }
 
 #[cfg(test)]
 mod test{
+    use std::any::Any;
+
     use nom::IResult;
 
     use ::{float, integer};
     use ::{number, symbol};
     use ::{LispVal, lispy};
-    use ::LispVal::{Float, Integer, Symbol, Sexpr, Qexpr};
-    use ::{eval};
-    use std::any::Any;
-    use ::{build_env, add};
+    use ::{eval, join};
+    use ::{add, build_env};
     use ::{def, error_str};
+    use ::LispVal::{Float, Integer, Qexpr, Sexpr, Symbol};
 
     #[test]
-    fn testSimpleParsing() {
+    fn simple_expr_parsing() {
         assert_eq!(unwrap_successful(integer("12")), Integer(12));
         assert_eq!(unwrap_successful(integer("-12")), Integer(-12));
 
@@ -589,14 +633,14 @@ mod test{
     }
 
     #[test]
-    fn testExprParsing() {
+    fn test_expr_parsing() {
         let result = lispy("+ 123.12 12");
         assert!(result.is_ok());
-        let (remaining, lispVal) = result.unwrap();
-        assert_eq!(3, lispVal.len());
-        assert_eq!(LispVal::Symbol("+".to_string()), lispVal[0]);
-        assert_eq!(LispVal::Float(123.12), lispVal[1]);
-        assert_eq!(LispVal::Integer(12), lispVal[2]);
+        let (remaining, lisp_val) = result.unwrap();
+        assert_eq!(3, lisp_val.len());
+        assert_eq!(LispVal::Symbol("+".to_string()), lisp_val[0]);
+        assert_eq!(LispVal::Float(123.12), lisp_val[1]);
+        assert_eq!(LispVal::Integer(12), lisp_val[2]);
 
         let result = lispy("(/ 1 1 (/ 1 0) 1)");
         assert!(result.is_ok());
@@ -621,7 +665,7 @@ mod test{
 
     #[test]
     fn eval_test() {
-        assert_eq!(call_eval("(eval (head {+ - + - * /}))))"), Ok(LispVal::Function("+".to_string(), add)));
+        assert_eq!(call_eval("(eval (head {+ - + - * /}))))"), Ok(LispVal::BuiltInFunction("+".to_string(), add)));
         assert_eq!( call_eval("((eval (head {+ - + - * /})) 10 20)"), Ok(Integer(30)));
     }
 
@@ -648,5 +692,29 @@ mod test{
         assert_eq!(def(&argument_list, &mut environment), Ok(Sexpr(vec![])));
         let sym= LispVal::Symbol("a".to_string());
         assert_eq!(environment.get(&sym), Ok(Integer(10)));
+    }
+
+    #[test]
+    fn test_join(){
+        let args = vec![get_argument_qexpr(vec!["1", "2"]), get_argument_qexpr(vec!["3", "4"]), get_argument_qexpr(vec!["5", "6"])];
+        let mut environment = build_env();
+        assert_eq!(join(&args, &mut environment ), Ok(Qexpr(vec![Symbol("1".to_string()), Symbol("2".to_string()), Symbol("3".to_string()), Symbol("4".to_string()), Symbol("5".to_string()), Symbol("6".to_string())])))
+    }
+
+    fn get_argument_qexpr(strs: Vec<&str>) -> Result<LispVal, LispVal> {
+        Ok(LispVal::Qexpr(get_symbol_vector(strs)))
+    }
+
+    fn get_symbol_vector(strs: Vec<&str>) -> Vec<LispVal> {
+        strs.iter().map(|x| Symbol(x.to_string())).collect()
+    }
+
+    #[test]
+    fn test_parse_lambda() {
+        assert_eq!(lispy("\\ {1} {2}").unwrap(),
+                   ("",
+                    vec![LispVal::UserDefinedFunction(
+                        vec![Qexpr(vec![Symbol("1".to_string())])],
+                        vec![Qexpr(vec![Integer(2)])])]));
     }
 }
