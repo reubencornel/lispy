@@ -21,6 +21,7 @@ use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
 use ::LispVal::{Qexpr, Sexpr, Symbol};
+use std::cell::{RefCell, RefMut};
 
 enum LispVal {
     Float(f64),
@@ -105,31 +106,45 @@ impl Debug for LispVal{
     }
 }
 
-struct Environment {
-    env: HashMap<String, LispVal>,
+struct Environment<'a> {
+    env: RefCell<HashMap<String, LispVal>>,
+    parent: Option<&'a Environment<'a>>
 }
 
-impl Environment {
-    pub fn new() -> Environment{
-        Environment{env : HashMap::new()}
+
+impl  <'a> Environment<'a> {
+    pub fn new<'b>() ->  Environment<'b>{
+        Environment{env : RefCell::new(HashMap::new()), parent: Option::None}
+    }
+
+    pub fn new_with_map<'b>(map: HashMap<String, LispVal>) ->  Environment<'b>{
+        Environment{env : RefCell::new(map), parent: Option::None}
     }
 
     pub fn put(&mut self, name_symbol: LispVal, val: LispVal) {
         match name_symbol {
-            LispVal::Symbol(name) => self.env.insert(name, val),
+            LispVal::Symbol(name) => {
+                let mut ref_mut = self.env.borrow_mut();
+                ref_mut.insert(name, val);
+            },
             _ => unimplemented!()
         };
     }
 
     pub fn get(&self, val: &LispVal) -> Result<LispVal, LispVal> {
         match val {
-            LispVal::Symbol(name) => {
-                match self.env.get(name) {
+            LispVal::Symbol(name)=> {
+                let map = self.env.borrow();
+                match map.get(name)  {
                     Some(val) => Ok(val.clone()),
-                    None => error(format!("Could not find value for symbol {}", name))
+                    None => match self.parent {
+                        Some(parent_env) => parent_env.get(val),
+                        None => error(format!("Could not find value for symbol {}", name))
+                    }
                 }
             },
             _ => error_str("Could not retrieve variable for type")
+
         }
     }
 }
@@ -153,7 +168,7 @@ fn float(input: &str) -> IResult<&str, LispVal> {
 
 
 fn symbol(input: &str) -> IResult<&str, LispVal> {
-    let (inp, result):(&str, Vec<&str>) = many1(alt((tag("+"), tag("*"), tag("/"), tag("-"), alphanumeric1)))(input)?;
+    let (inp, result):(&str, Vec<&str>) = many1(alt((tag("+"), tag("*"), tag("/"), tag("-"),tag("="), alphanumeric1)))(input)?;
     let i_name: Vec<String> = result.iter().map(|x| x.to_string()).collect();
     Ok((inp, LispVal::Symbol(i_name.join(""))))
 }
@@ -385,6 +400,37 @@ fn is_symbol(val: &LispVal) -> bool {
     }
 }
 
+fn def_local(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
+    def(argument_results, env)
+}
+
+fn def_global(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
+    if (env.parent.is_none()) {
+        return def(argument_results, env);
+    } else {
+        match env.parent {
+            Some(parent) => return def_global_helper(argument_results, parent),
+            None => return error_str("Unexpted case")
+        }
+    }
+}
+
+fn def_global_helper(argument_results: &Vec<Result<LispVal, LispVal>>, env: &Environment) -> Result<LispVal, LispVal>  {
+    match env.parent {
+        Some(parent) => return def_global_helper(argument_results, parent),
+        None => {
+            let mut map = env.env.borrow_mut();
+            let mut e: Environment = Environment::new();
+            let result = def(argument_results, &mut e);
+            e.env.borrow().iter().for_each(|(x,y)| {
+                map.insert(x.clone(), y.clone());
+            });
+
+            result
+        }
+    }
+}
+
 fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
     safe_execute(argument_results,
                  |args, e| {
@@ -538,7 +584,7 @@ fn print_sexprs(elements: Vec<LispVal>, opening: &str, closing: &str, recursive:
     }
 }
 
-fn build_env() -> Environment {
+fn build_env<'a>() -> Environment<'a> {
     let mut environment = Environment::new();
     let add_to_env =  |name: &str, value: fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>,e: &mut Environment|  {
         e.put(LispVal::Symbol(name.to_string()), LispVal::BuiltInFunction(name.to_string(), value));
@@ -552,8 +598,15 @@ fn build_env() -> Environment {
     add_to_env("head", head, &mut environment);
     add_to_env("tail", tail, &mut environment);
     add_to_env("eval", fn_eval, &mut environment);
-    add_to_env("def", def, &mut environment);
+    add_to_env("def", def_global, &mut environment);
+    add_to_env("=", def_local, &mut environment);
     add_to_env("join", join, &mut environment);
+    environment
+}
+
+fn build_env_with_parent<'a>(parent: &'a Environment<'a>) -> Environment<'a> {
+    let mut environment: Environment= build_env();
+    environment.parent = Some(parent);
     environment
 }
 
@@ -610,6 +663,8 @@ mod test{
     use ::{add, build_env};
     use ::{def, error_str};
     use ::LispVal::{Float, Integer, Qexpr, Sexpr, Symbol};
+    use ::{build_env_with_parent};
+    use ::{def_global, def_local};
 
     #[test]
     fn simple_expr_parsing() {
@@ -716,5 +771,41 @@ mod test{
                     vec![LispVal::UserDefinedFunction(
                         vec![Qexpr(vec![Symbol("1".to_string())])],
                         vec![Qexpr(vec![Integer(2)])])]));
+    }
+
+    #[test]
+    fn test_environment_get() {
+        let mut e1 = build_env();
+        e1.put(LispVal::Symbol("a".to_string()), LispVal::Symbol("b".to_string()));
+        let mut e2 = build_env_with_parent(&e1);
+        let val = LispVal::Symbol("a".to_string());
+        let val1 = LispVal::Symbol("c".to_string());
+
+        assert_eq!(e2.get(&val), Ok(Symbol("b".to_string())));
+        assert_eq!(e2.get(&val1), Err(LispVal::Err("Could not find value for symbol c".to_string())));
+    }
+
+    #[test]
+    fn test_environment_def() {
+        let mut e1 = build_env();
+        let val = LispVal::Symbol("a".to_string());
+
+        {
+            let mut e2 = build_env_with_parent(&e1);
+            let val1 = LispVal::Symbol("c".to_string());
+
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(1))];
+            def_global(&arguments, &mut e2);
+            assert_eq!(e2.get(&val), Ok(Integer(1)));
+
+            let arguments = vec![get_argument_qexpr(vec!["b"]), Ok(Integer(3))];
+            let val1 = LispVal::Symbol("b".to_string());
+            def_local(&arguments, &mut e2);
+            assert_eq!(e2.get(&val1), Ok(Integer(3)));
+            assert_eq!(e1.get(&val1), error_str("Could not find value for symbol b"));
+
+        }
+        assert_eq!(e1.get(&val), Ok(Integer(1)));
+
     }
 }
