@@ -27,3 +27,7 @@ path="src/polishNotation.rs"
 [[bin]]
 name="lispy"
 path="src/lispy.rs"
+
+[[bin]]
+name="FixingLifetimes"
+path="src/FixingLifetimes.rs"
