@@ -3,25 +3,21 @@ extern crate nom;
 extern crate rustyline;
 
 use core::fmt;
-use std::cmp::min;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{alphanumeric0, alphanumeric1, digit0, digit1, space0, space1};
-use nom::combinator::{complete, opt};
-use nom::error::ErrorKind;
+use nom::character::complete::{ alphanumeric1, digit0, digit1, space0, space1};
+use nom::combinator::{opt};
 use nom::IResult;
-use nom::multi::{many0, many1, separated_list, separated_listc};
+use nom::multi::{many0, many1, separated_list};
 use nom::sequence::tuple;
-use rustyline::config::ColorMode::Enabled;
-use rustyline::config::CompletionType::List;
-use rustyline::Editor;
-use rustyline::error::ReadlineError;
 
 use ::LispVal::{Qexpr, Sexpr, Symbol};
-use std::cell::{RefCell, RefMut};
+use std::cell::{RefCell};
+use rustyline::Editor;
+use rustyline::error::ReadlineError;
 
 enum LispVal {
     Float(f64),
@@ -158,7 +154,7 @@ fn minus_sign(input: &str) -> IResult<&str, Option<&str>> {
 fn float(input: &str) -> IResult<&str, LispVal> {
     let (i1, minus_sign) = minus_sign(input)?;
     let (i2, digit0) = opt(digit0)(i1)?;
-    let (i3, dot) = tag(".")(i2)?;
+    let (i3, _) = tag(".")(i2)?;
     let (i4, mantissa) = digit1(i3)?;
 
     let f: String = format!("{}{}{}{}", minus_sign.unwrap_or("") , digit0.unwrap_or("") , "." , mantissa);
@@ -288,7 +284,7 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: &mut Environment) -> Result<LispVal,
                 let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env)).collect();
                 funct(&argument_results, env)
             },
-            _ =>  error_str(("Tried to evaluate a non function"))
+            _ =>  error_str("Tried to evaluate a non function")
         }
     }
 }
@@ -406,7 +402,7 @@ fn def_local(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environ
 }
 
 fn def_global(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
-    if (env.parent.is_none()) {
+    if env.parent.is_none() {
         return def(argument_results, env);
     } else {
         match env.parent {
