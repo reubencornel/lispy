@@ -19,18 +19,18 @@ use std::cell::{RefCell};
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
-enum LispVal {
+enum LispVal<'a> {
     Float(f64),
     Integer(i64),
     Symbol(String),
     Err(String),
-    Sexpr(Vec<LispVal>),
-    Qexpr(Vec<LispVal>),
-    BuiltInFunction(String, fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>),
-    UserDefinedFunction(Vec<LispVal>, Vec<LispVal>)
+    Sexpr(Vec<LispVal<'a>>),
+    Qexpr(Vec<LispVal<'a>>),
+    BuiltInFunction(String, fn(Vec<Result<LispVal, LispVal>>, Environment) -> Result<(LispVal<'a>, Environment<'a>), (LispVal<'a>, Environment<'a>)>),
+    UserDefinedFunction(Vec<LispVal<'a>>, Vec<LispVal<'a>>, Option<Environment<'a>>)
 }
 
-impl Clone for LispVal {
+impl <'a> Clone for LispVal<'a> {
     fn clone(&self) -> Self {
         match self {
             LispVal::Float(f) => LispVal::Float(f.clone()),
@@ -40,13 +40,13 @@ impl Clone for LispVal {
             LispVal::Sexpr(exprs) => LispVal::Sexpr(exprs.clone()),
             LispVal::Qexpr(exprs) => LispVal::Qexpr(exprs.clone()),
             LispVal::BuiltInFunction(name, f) => LispVal::BuiltInFunction(name.clone(), *f),
-            LispVal::UserDefinedFunction(args, body) => LispVal::UserDefinedFunction(args.clone(), body.clone())
+            LispVal::UserDefinedFunction(args, body, _) => LispVal::UserDefinedFunction(args.clone(), body.clone(), Option::None)
         }
     }
 }
 
-impl PartialEq for LispVal{
-    fn eq(&self, other: &LispVal) -> bool {
+impl <'a> PartialEq for LispVal<'a>{
+    fn eq(&self, other: &LispVal<'a>) -> bool {
         match self {
             LispVal::Float(f) => match other {
                 LispVal::Float(f1) => f == f1,
@@ -76,8 +76,8 @@ impl PartialEq for LispVal{
                 LispVal::BuiltInFunction(i1, f1) => i == i1,
                 _ => false
             },
-            LispVal::UserDefinedFunction(args, body) => match other {
-                LispVal::UserDefinedFunction(args1, body1) => {
+            LispVal::UserDefinedFunction(args, body, _) => match other {
+                LispVal::UserDefinedFunction(args1, body1, _) => {
                     args.iter().zip(args1.iter()).map(|(x, y)| x == y).fold(true, |x, y| x && y)
                         && body.iter().zip(body1.iter()).map(|(x, y)| x == y).fold(true, |x, y| x && y)
                 },
@@ -87,7 +87,7 @@ impl PartialEq for LispVal{
     }
 }
 
-impl Display for LispVal {
+impl <'a> Display for LispVal<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LispVal::Float(a) => write!(f, "{}", a),
@@ -97,12 +97,23 @@ impl Display for LispVal {
             LispVal::Sexpr(exprs) => write!(f, "({:?})", exprs),
             LispVal::Qexpr(exprs) => write!(f, "[{:?}]", exprs),
             LispVal::BuiltInFunction(name, _) => write!(f, "Builtin Function({})", name),
-            LispVal::UserDefinedFunction(args, _) => write!(f, "Function ({})", &args[0])
+            LispVal::UserDefinedFunction(args, _, _) => write!(f, "Function ({})", &args[0])
         }
     }
 }
 
-impl Debug for LispVal{
+//
+//fn print_expr(expr: &Vec<LispVal>, recursive: bool) {
+//    for e in expr.iter() {
+//        print_val(e);
+//        print!(" ");
+//    }
+//    if !recursive {
+//        println!()
+//    }
+//}
+
+impl <'a> Debug for LispVal<'a>{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LispVal::Float(a) =>  write!(f, "Float({})", a),
@@ -112,14 +123,14 @@ impl Debug for LispVal{
             LispVal::Sexpr(exprs) => write!(f, "Sexpr({:?})",exprs),
             LispVal::Qexpr(exprs) => write!(f, "Qexpr({:?})",exprs),
             LispVal::BuiltInFunction(name, _) => write!(f, "Builtin Function({})", name),
-            LispVal::UserDefinedFunction(args, _) => write!(f, "Function {:?}", &args[0])
+            LispVal::UserDefinedFunction(args, _, _) => write!(f, "Function {:?}", &args[0])
         }
     }
 }
 
 #[derive(Clone, Debug)]
 struct Environment<'a> {
-    env: RefCell<HashMap<String, LispVal>>,
+    env: RefCell<HashMap<String, LispVal<'a>>>,
     parent: Option<&'a Environment<'a>>
 }
 
@@ -129,11 +140,11 @@ impl  <'a> Environment<'a> {
         Environment{env : RefCell::new(HashMap::new()), parent: Option::None}
     }
 
-    pub fn new_with_map<'b>(map: HashMap<String, LispVal>) ->  Environment<'b>{
-        Environment{env : RefCell::new(map), parent: Option::None}
-    }
+//    pub fn new_with_map<'b>(map: HashMap<String, LispVal>) ->  Environment<'b>{
+//        Environment{env : RefCell::new(map), parent: Option::None}
+//    }
 
-    pub fn put(&mut self, name_symbol: LispVal, val: LispVal) {
+    pub fn put(&mut self, name_symbol: LispVal<'a>, val: LispVal<'a>) {
         match name_symbol {
             LispVal::Symbol(name) => {
                 let mut ref_mut = self.env.borrow_mut();
@@ -143,7 +154,7 @@ impl  <'a> Environment<'a> {
         };
     }
 
-    pub fn get(&self, val: &LispVal) -> Result<LispVal, LispVal> {
+    pub fn get<'b>(&self, val: &'b LispVal<'b>) -> Result<LispVal<'a>, LispVal<'a>> {
         match val {
             LispVal::Symbol(name)=> {
                 let map = self.env.borrow();
@@ -217,7 +228,7 @@ fn func_parameter_qexpr(input: &str) -> IResult<&str, LispVal> {
 
 fn lambda(input: &str) -> IResult<&str, LispVal> {
     let (inp, (lmbda, s, args, s1,body)) = tuple((tag("\\"), space1, func_parameter_qexpr,space1, qexpr))(input)?;
-    Ok((inp, LispVal::UserDefinedFunction(vec![args], vec![body])))
+    Ok((inp, LispVal::UserDefinedFunction(vec![args], vec![body], Option::None)))
 }
 
 fn qexpr(input: &str) -> IResult<&str, LispVal> {
@@ -254,55 +265,20 @@ fn parse(input: &str) -> IResult<&str, Vec<LispVal>> {
 
 /* -----------------------  UTIL FUNCTIONS -------------------------------*/
 
-fn error(message: String) -> Result<LispVal, LispVal> {
+fn error<'a>(message: String) -> Result<LispVal<'a>, LispVal<'a>> {
     Err(LispVal::Err(message))
 }
 
-fn error_str(message: &str) -> Result<LispVal, LispVal> {
+fn error_str<'a>(message: &str) -> Result<LispVal<'a>, LispVal<'a>> {
     error(message.to_string())
 }
 
 /* -----------------------  LISP -------------------------------*/
 
-//fn eval(expr: &LispVal, env: &mut Environment) -> Result<LispVal, LispVal> {
-//    match expr {
-//        LispVal::Integer(x) => Ok(LispVal::Integer(x.clone())),
-//        LispVal::Float(x) => Ok(LispVal::Float(x.clone())),
-//        LispVal::Symbol(sym) => {
-//            let val = LispVal::Symbol(sym.clone());
-//            match env.get(&val) {
-//                Ok(value) => Ok(value),
-//                Err(value) => error(format!("Symbol {} not found", sym))
-//            }},
-//        LispVal::Sexpr(elements) => eval_sexpr(elements, env),
-//        LispVal::Qexpr(elements) => eval_qexpr(elements),
-//        LispVal::Err(message)=> error(message.clone()),
-//        LispVal::UserDefinedFunction(args, body) => Ok(LispVal::UserDefinedFunction(args.clone(), body.clone())),
-//        _ => unimplemented!()
-//    }
-//}
 //fn eval_qexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
 //    Ok(LispVal::Qexpr(elements.iter().map(|x| x.clone()).collect()))
 //}
 //
-//fn eval_sexpr(elements: &Vec<LispVal>, env: &mut Environment) -> Result<LispVal, LispVal> {
-//    let x = match &elements[0] {
-//        LispVal::Sexpr(values) => {
-//            eval_sexpr(values, env)
-//        },
-//        _ => env.get(&elements[0])
-//    };
-//    match x {
-//        Err(_) => error_str("The first element of an sexpr should be a valid symbol"),
-//        Ok(value) => match value {
-//            LispVal::BuiltInFunction(name, funct) => {
-//                let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env)).collect();
-//                funct(&argument_results, env)
-//            },
-//            _ =>  error_str("Tried to evaluate a non function")
-//        }
-//    }
-//}
 //
 //
 //fn has_failure(argument_results: &Vec<Result<LispVal, LispVal>>) -> Option<&Result<LispVal, LispVal>> {
@@ -321,7 +297,7 @@ fn error_str(message: &str) -> Result<LispVal, LispVal> {
 //    }
 //}
 //
-//fn add(argument_results: &Vec<Result<LispVal, LispVal>>, env: &mut Environment) -> Result<LispVal, LispVal> {
+//fn add<'a, 'b>(argument_results: Vec<Result<LispVal<'a>, LispVal<'a>>>, env: Environment) -> Result<LispVal, LispVal> {
 //    safe_execute(argument_results,
 //                 |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
 //                     number_function_eval(x, y, add_i64, add_f64) }),
@@ -599,9 +575,9 @@ fn error_str(message: &str) -> Result<LispVal, LispVal> {
 //
 fn build_env<'a>() -> Environment<'a> {
     let mut environment = Environment::new();
-    let add_to_env =  |name: &str, value: fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>,e: &mut Environment|  {
-        e.put(LispVal::Symbol(name.to_string()), LispVal::BuiltInFunction(name.to_string(), value));
-    };
+//    let add_to_env =  |name: &str, value: fn(&Vec<Result<LispVal, LispVal>>, &mut Environment) -> Result<LispVal, LispVal>,e: &mut Environment|  {
+//        e.put(LispVal::Symbol(name.to_string()), LispVal::BuiltInFunction(name.to_string(), value));
+//    };
 
 //    add_to_env("+", add, &mut environment);
 //    add_to_env("-", sub, &mut environment);
@@ -623,17 +599,69 @@ fn build_env<'a>() -> Environment<'a> {
 //    environment
 //}
 
-fn eval(expr: Vec<LispVal>, env: Environment) -> Result<(LispVal, Environment), (LispVal, Environment)> {
+fn has_failure<'a>(argument_results: &'a Vec<Result<LispVal<'a>, LispVal<'a>>>) -> Option<&'a Result<LispVal<'a>, LispVal<'a>>> {
+    argument_results.iter().find(|x| match x {
+        Ok(e) => false,
+        Err(e) => true
+    })
+}
+
+fn safe_execute<'a, 'b>(argument_results: Vec<Result<LispVal<'b>, LispVal<'b>>>,f: fn(Vec<Result<LispVal, LispVal>>, Environment) -> Result<(LispVal<'b>, Environment<'b>), (LispVal<'b>, Environment<'b>)>, env: Environment<'b>) -> Result<(LispVal<'b>, Environment<'b>), (LispVal<'b>, Environment<'b>)> {
+    for result in argument_results.iter() {
+        if result.is_err() {
+            return Err((result.clone().unwrap_err(), env))
+        }
+    }
+    f(argument_results, env)
+}
+
+fn eval_sexpr<'a, 'b>(elements: &'a Vec<LispVal<'a>>, env: Environment<'b>) -> Result<(LispVal<'b>, Environment<'b>), (LispVal<'b>, Environment<'b>)> {
+    let x = match &elements[0] {
+        LispVal::Sexpr(values) => {
+            eval_sexpr(values, env)
+        },
+        _ => match env.get(&elements[0]) {
+            Ok(result) => Ok((result, env)),
+            Err(err) => Err((err, env))
+        }
+    };
+    match x {
+        Err((err, e)) => Err((err, e)),
+        Ok((value, e)) => match value {
+            LispVal::BuiltInFunction(name, funct) => {
+                let mut argument_results = vec![];
+                let mut updated_env = e;
+                for element in elements[1..].iter() {
+                    match eval(vec![element.clone()], updated_env) {
+                        Ok((value, e1)) => {
+                            updated_env = e1;
+                            argument_results.push(Ok(value));
+                        },
+                        Err((value, e1)) => {
+                            updated_env = e1;
+                            argument_results.push(Err(value));
+                        }
+                    }
+                }
+                funct(argument_results, updated_env)
+            },
+            _ =>  Err((LispVal::Err("Unexpected eval".to_string()), e) )
+        }
+    }
+}
+
+
+fn eval<'a, 'b>(expr: Vec<LispVal<'a>>, env: Environment<'b>) -> Result<(LispVal<'b>, Environment<'b>), (LispVal<'b>, Environment<'b>)> {
     match expr[0] {
         LispVal::Integer(x) => Ok((LispVal::Integer(x.clone()), env)),
         LispVal::Float(x) => Ok((LispVal::Float(x.clone()), env)),
-//        LispVal::Symbol(sym) => {
-//            let val = LispVal::Symbol(sym.clone());
-//            match env.get(&val) {
-//                Ok(value) => Ok(value),
-//                Err(value) => error(format!("Symbol {} not found", sym))
-//            }},
-//        LispVal::Sexpr(elements) => eval_sexpr(elements, env),
+        LispVal::Symbol(ref sym) => {
+            let val = LispVal::Symbol(sym.clone());
+            match env.get(&val) {
+                Ok(value) => Ok((value, env)),
+                Err(value) => Err((LispVal::Err(format!("Symbol {} not found", sym)), env))
+            }},
+        LispVal::Sexpr(ref elements) => Ok((LispVal::Integer(42), env)), //eval_sexpr(elements, env),
 //        LispVal::Qexpr(elements) => eval_qexpr(elements),
         LispVal::Err(ref message)=> Err((LispVal::Err(message.clone()), env)),
 //        LispVal::UserDefinedFunction(args, body) => Ok(LispVal::UserDefinedFunction(args.clone(), body.clone())),
@@ -651,14 +679,20 @@ fn main() {
                 rl.add_history_entry(line.as_str());
                 match parse(&line) {
                     Ok((str, expr)) => {
-//                        match eval(&expr[0], &mut env) {
-//                            Ok(value) => print_expr(&(vec![value]), false),
-//                            Err(value) => print_expr(&(vec![value]), false)
-//                        }
+                        match eval(expr, env) {
+                            Ok((lispVal,e)) => {
+                                env = e;
+                                println!("{}", lispVal);
+                            },
+                            Err((lispVal, e)) => {
+                                env = e;
+                                println!("{}", lispVal);
+                            }
+                        }
                     },
                     Err(error) => println!("Error {:?}", error),
                 }
-            }
+            },
             Err(ReadlineError::Interrupted) => {
                 println!("Bye Fren!!");
                 break;
@@ -713,7 +747,7 @@ mod test{
         assert_eq!(unwrap_successful(number("-.12")), Float(-0.12));
     }
 
-    fn unwrap_successful(x: IResult<&str, LispVal>) -> LispVal {
+    fn unwrap_successful<'a>(x: IResult<&str, LispVal<'a>>) -> LispVal<'a> {
         assert!(x.is_ok());
         x.unwrap().1
     }
@@ -750,6 +784,14 @@ mod test{
 
         let result = eval(vec![LispVal::Err("This is an error".to_string())], values.1);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_env() {
+        let mut env = build_env();
+        env.put(LispVal::Symbol("pi".to_string()), LispVal::Float(3.14159));
+        let result = env.get(&(LispVal::Symbol("pi".to_string()))).unwrap();
+        assert_eq!(result, LispVal::Float(3.14159))
     }
 //
 //    #[test]
