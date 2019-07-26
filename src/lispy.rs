@@ -261,12 +261,11 @@ fn eval(expr: &LispVal, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVa
         LispVal::Float(x) => Ok(LispVal::Float(x.clone())),
         LispVal::Symbol(sym) => {
             let val = LispVal::Symbol(sym.clone());
-            Ok(LispVal::Integer(10))
+            match env.borrow().get(&val) {
+                Ok(value) => Ok(value),
+                Err(value) => error(format!("Symbol {} not found", sym))
+            }
         },
-//            match env.get(&val) {
-//                Ok(value) => Ok(value),
-//                Err(value) => error(format!("Symbol {} not found", sym))
-//            }},
         LispVal::Sexpr(elements) => eval_sexpr(elements, env),
         LispVal::Qexpr(elements) => eval_qexpr(elements),
         LispVal::Err(message)=> error(message.clone()),
@@ -283,8 +282,7 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
         LispVal::Sexpr(values) => {
             eval_sexpr(values, env.clone())
         },
-//        _ => env.get(&elements[0]) REUBEN TO FIX
-        _ => Ok(LispVal::Integer(19))
+        _ => env.borrow().get(&elements[0])
     };
     match x {
         Err(_) => error_str("The first element of an sexpr should be a valid symbol"),
@@ -417,22 +415,13 @@ fn def_global(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<
         let p = &env.borrow().parent;
         match  p {
             Some(parent) => {
-               def(argument_results, parent.clone())
+                def(argument_results, parent.clone())
             }
             None => return error_str("Unexpted case")
         }
     }
 }
-//
-//fn def_global_helper(argument_results: &Vec<Result<LispVal, LispVal>>, env:Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>  {
-//    let parent = env.borrow();
-//    match &parent{
-//        Some(parent) => return def_global_helper(argument_results, parent.clone()),
-//        None => {
-//            def(argument_results, env.clone())
-//        }
-//    }
-//}
+
 
 fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     safe_execute(argument_results,
@@ -601,8 +590,8 @@ fn build_env<'a>() -> Rc<RefCell<Environment>> {
     add_to_env("head", head, environment.clone());
     add_to_env("tail", tail, environment.clone());
     add_to_env("eval", fn_eval, environment.clone());
-//    add_to_env("def", def_global, environment.clone());
-//    add_to_env("=", def_local, environment.clone());
+    add_to_env("def", def_global, environment.clone());
+    add_to_env("=", def_local, environment.clone());
     add_to_env("join", join, environment.clone());
     environment
 }
@@ -661,98 +650,98 @@ mod test{
     use ::LispVal::{Float, Integer, Qexpr, Sexpr, Symbol};
     use ::{Environment, error_str};
     use ::{def_global, def_local};
+    use def;
 
 
-//    #[test]
-//    fn simple_expr_parsing() {
-//        assert_eq!(unwrap_successful(integer("12")), Integer(12));
-//        assert_eq!(unwrap_successful(integer("-12")), Integer(-12));
-//
-//        assert_eq!(unwrap_successful(float("-12.0")), Float(-12.0));
-//        assert_eq!(unwrap_successful(float("-0.12")), Float(-0.12));
-//        assert_eq!(unwrap_successful(float("-.12")), Float(-0.12));
-//        assert_eq!(unwrap_successful(float(".12")), Float(0.12));
-//
-//        assert_eq!(unwrap_successful(symbol("+")), Symbol("+".to_string()));
-//
-//        assert_eq!(unwrap_successful(number("12")), Integer(12));
-//        assert_eq!(unwrap_successful(number("-.12")), Float(-0.12));
-//    }
-//
-//    fn unwrap_successful(x: IResult<&str, LispVal>) -> LispVal {
-//        assert!(x.is_ok());
-//        x.unwrap().1
-//    }
-//
-//    #[test]
-//    fn test_expr_parsing() {
-//        let result = lispy("+ 123.12 12");
-//        assert!(result.is_ok());
-//        let (remaining, lisp_val) = result.unwrap();
-//        assert_eq!(3, lisp_val.len());
-//        assert_eq!(LispVal::Symbol("+".to_string()), lisp_val[0]);
-//        assert_eq!(LispVal::Float(123.12), lisp_val[1]);
-//        assert_eq!(LispVal::Integer(12), lisp_val[2]);
-//
-//        let result = lispy("(/ 1 1 (/ 1 0) 1)");
-//        assert!(result.is_ok());
-//        let (remaining, value) = result.unwrap();
-//        assert_eq!(vec![Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(1), Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(0)]), Integer(1)])], value);
-//    }
-//
-//    #[test]
-//    fn math_test() {
-//        assert_eq!(Ok(Integer(3)), call_eval("(eval (head {(+ 1 2) (+ 10 20)}))"));
-//        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1 0.2)"));
-//        assert_eq!(Ok(Float(1.4)), call_eval("(+ 1.2 0.2)"));
-//        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1.2 0)"));
-//
-//        assert_eq!( call_eval("(+ 1 1)"), Ok(Integer(2)));
-//    }
-//
-//    #[test]
-//    fn list_test() {
-//        assert_eq!(call_eval("(list 123 123)"), Ok(Qexpr(vec![Integer(123), Integer(123)])))
-//    }
-//
-//    #[test]
-//    fn eval_test() {
-//        assert_eq!(call_eval("(eval (head {+ - + - * /}))))"), Ok(LispVal::BuiltInFunction("+".to_string(), add)));
-//        assert_eq!( call_eval("((eval (head {+ - + - * /})) 10 20)"), Ok(Integer(30)));
-//    }
-//
-//    fn call_eval(input: &str) -> Result<LispVal, LispVal> {
-//        let (i, expr) = lispy(input).unwrap();
-//        let mut env = build_env();
-//        eval(&expr[0], &mut env)
-//    }
+    #[test]
+    fn simple_expr_parsing() {
+        assert_eq!(unwrap_successful(integer("12")), Integer(12));
+        assert_eq!(unwrap_successful(integer("-12")), Integer(-12));
 
-//    #[test]
-//    fn test_def() {
-//        let argument_list = vec![Ok(LispVal::Sexpr(vec![]))];
-//        assert_eq!( def(&argument_list, &mut (build_env())), error_str("Expected the first argument to the a Qexpr"));
-//
-//        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]))];
-//        assert_eq!(def(&argument_list, &mut (build_env())), error_str("Number of symbols to values don't match"));
-//
-//
-//        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Integer(10)])), Ok(LispVal::Integer(10))];
-//        assert_eq!(def(&argument_list, &mut (build_env())), error_str("All values of the first argument must be symbols")); //, Ok(Sexpr(vec![])));
-//
-//        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())])), Ok(LispVal::Integer(10))];
-//        let mut environment = build_env();
-//        assert_eq!(def(&argument_list, &mut environment), Ok(Sexpr(vec![])));
-//        let sym= LispVal::Symbol("a".to_string());
-//        assert_eq!(environment.get(&sym), Ok(Integer(10)));
-//    }
+        assert_eq!(unwrap_successful(float("-12.0")), Float(-12.0));
+        assert_eq!(unwrap_successful(float("-0.12")), Float(-0.12));
+        assert_eq!(unwrap_successful(float("-.12")), Float(-0.12));
+        assert_eq!(unwrap_successful(float(".12")), Float(0.12));
 
-//    #[test]
-//    fn test_join(){
-//        let args = vec![get_argument_qexpr(vec!["1", "2"]), get_argument_qexpr(vec!["3", "4"]), get_argument_qexpr(vec!["5", "6"])];
-//        let mut environment = build_env();
-//        assert_eq!(join(&args, &mut environment ), Ok(Qexpr(vec![Symbol("1".to_string()), Symbol("2".to_string()), Symbol("3".to_string()), Symbol("4".to_string()), Symbol("5".to_string()), Symbol("6".to_string())])))
-//    }
-//
+        assert_eq!(unwrap_successful(symbol("+")), Symbol("+".to_string()));
+
+        assert_eq!(unwrap_successful(number("12")), Integer(12));
+        assert_eq!(unwrap_successful(number("-.12")), Float(-0.12));
+    }
+
+    fn unwrap_successful(x: IResult<&str, LispVal>) -> LispVal {
+        assert!(x.is_ok());
+        x.unwrap().1
+    }
+
+    #[test]
+    fn test_expr_parsing() {
+        let result = lispy("+ 123.12 12");
+        assert!(result.is_ok());
+        let (remaining, lisp_val) = result.unwrap();
+        assert_eq!(3, lisp_val.len());
+        assert_eq!(LispVal::Symbol("+".to_string()), lisp_val[0]);
+        assert_eq!(LispVal::Float(123.12), lisp_val[1]);
+        assert_eq!(LispVal::Integer(12), lisp_val[2]);
+
+        let result = lispy("(/ 1 1 (/ 1 0) 1)");
+        assert!(result.is_ok());
+        let (remaining, value) = result.unwrap();
+        assert_eq!(vec![Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(1), Sexpr(vec![Symbol("/".to_string()), Integer(1), Integer(0)]), Integer(1)])], value);
+    }
+
+    #[test]
+    fn math_test() {
+        assert_eq!(Ok(Integer(3)), call_eval("(eval (head {(+ 1 2) (+ 10 20)}))"));
+        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1 0.2)"));
+        assert_eq!(Ok(Float(1.4)), call_eval("(+ 1.2 0.2)"));
+        assert_eq!(Ok(Float(1.2)), call_eval("(+ 1.2 0)"));
+
+        assert_eq!( call_eval("(+ 1 1)"), Ok(Integer(2)));
+    }
+
+    #[test]
+    fn list_test() {
+        assert_eq!(call_eval("(list 123 123)"), Ok(Qexpr(vec![Integer(123), Integer(123)])))
+    }
+
+    #[test]
+    fn eval_test() {
+        assert_eq!(call_eval("(eval (head {+ - + - * /}))))"), Ok(LispVal::BuiltInFunction("+".to_string(), add)));
+        assert_eq!( call_eval("((eval (head {+ - + - * /})) 10 20)"), Ok(Integer(30)));
+    }
+
+    fn call_eval(input: &str) -> Result<LispVal, LispVal> {
+        let (i, expr) = lispy(input).unwrap();
+        let mut env = build_env();
+        eval(&expr[0], env.clone())
+    }
+
+    #[test]
+    fn test_def() {
+        let argument_list = vec![Ok(LispVal::Sexpr(vec![]))];
+        assert_eq!( def(&argument_list,build_env()), error_str("Expected the first argument to the a Qexpr"));
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]))];
+        assert_eq!(def(&argument_list, build_env()), error_str("Number of symbols to values don't match"));
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Integer(10)])), Ok(LispVal::Integer(10))];
+        assert_eq!(def(&argument_list, build_env()), error_str("All values of the first argument must be symbols")); //, Ok(Sexpr(vec![])));
+
+        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())])), Ok(LispVal::Integer(10))];
+        let mut environment = build_env();
+        assert_eq!(def(&argument_list, environment.clone()), Ok(Sexpr(vec![])));
+        let sym= LispVal::Symbol("a".to_string());
+        assert_eq!(environment.borrow().get(&sym), Ok(Integer(10)));
+    }
+
+    #[test]
+    fn test_join(){
+        let args = vec![get_argument_qexpr(vec!["1", "2"]), get_argument_qexpr(vec!["3", "4"]), get_argument_qexpr(vec!["5", "6"])];
+        let mut environment = build_env();
+        assert_eq!(join(&args, environment.clone() ), Ok(Qexpr(vec![Symbol("1".to_string()), Symbol("2".to_string()), Symbol("3".to_string()), Symbol("4".to_string()), Symbol("5".to_string()), Symbol("6".to_string())])))
+    }
+
     fn get_argument_qexpr(strs: Vec<&str>) -> Result<LispVal, LispVal> {
         Ok(LispVal::Qexpr(get_symbol_vector(strs)))
     }
@@ -760,15 +749,16 @@ mod test{
     fn get_symbol_vector(strs: Vec<&str>) -> Vec<LispVal> {
         strs.iter().map(|x| Symbol(x.to_string())).collect()
     }
-//
-//    #[test]
-//    fn test_parse_lambda() {
-//        assert_eq!(lispy("\\ {1} {2}").unwrap(),
-//                   ("",
-//                    vec![LispVal::UserDefinedFunction(
-//                        vec![Qexpr(vec![Symbol("1".to_string())])],
-//                        vec![Qexpr(vec![Integer(2)])])]));
-//    }
+
+    #[test]
+    fn test_parse_lambda() {
+        assert_eq!(lispy("\\ {1} {2}").unwrap(),
+                   ("",
+                    vec![LispVal::UserDefinedFunction(
+                        vec![Qexpr(vec![Symbol("1".to_string())])],
+                        vec![Qexpr(vec![Integer(2)])],
+                        Option::None)]));
+    }
 
     #[test]
     fn test_environment_get() {
@@ -782,7 +772,7 @@ mod test{
         assert_eq!(e2.borrow().get(&val1), Err(LispVal::Err("Could not find value for symbol c".to_string())));
     }
 
-        #[test]
+    #[test]
     fn test_environment_def() {
         let mut e1 = build_env();
         let val = LispVal::Symbol("a".to_string());
