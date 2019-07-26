@@ -273,6 +273,11 @@ fn eval(expr: &LispVal, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVa
         _ => unimplemented!()
     }
 }
+
+fn user_defined_function_eval(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    unimplemented!()
+}
+
 fn eval_qexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
     Ok(LispVal::Qexpr(elements.iter().map(|x| x.clone()).collect()))
 }
@@ -282,6 +287,9 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
         LispVal::Sexpr(values) => {
             eval_sexpr(values, env.clone())
         },
+        LispVal::UserDefinedFunction(name, body, local_env) => {
+            return Ok(LispVal::UserDefinedFunction(name.clone(), body.clone(), local_env.clone()))
+        }
         _ => env.borrow().get(&elements[0])
     };
     match x {
@@ -291,9 +299,41 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
                 let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env.clone())).collect();
                 funct(&argument_results, env.clone())
             },
+            LispVal::UserDefinedFunction(parameters, body, local_env) => {
+                let argument_results: Vec<Result<LispVal, LispVal>> = elements[1..].iter().map(|e| eval(e, env.clone())).collect();
+                eval_function(parameters, body, &argument_results, local_env, env.clone())
+            },
             _ =>  error_str("Tried to evaluate a non function")
         }
     }
+}
+
+fn eval_function (mut parameters: Vec<LispVal>, body: Vec<LispVal>, arguments: &Vec<Result<LispVal, LispVal>>, local_env: Option<Rc<RefCell<Environment>>>, global_env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    if arguments.len() > parameters.len() {
+        return error(format!("Passed in too many arguments for this function. This function accepts {} arguments", parameters.len()));
+    }
+
+    let mut result = if local_env.is_some() {
+        local_env.unwrap().clone()
+    } else {
+        global_env.clone()
+    };
+
+    let args_len = arguments.len();
+    let mut args_count = 0;
+
+    for i in 0..args_len {
+        result.clone().borrow_mut().put(parameters.get(0).unwrap().clone(), arguments.get(i).unwrap().clone().unwrap());
+        args_count = args_count + 1;
+        parameters.pop();
+    }
+
+    if (args_count < args_len) {
+        return Ok(LispVal::UserDefinedFunction(parameters, body, Some(result)));
+    }
+    // call eval with the body and local env
+
+    unimplemented!()
 }
 
 
@@ -824,5 +864,11 @@ mod test{
         }
         assert_eq!(e1.borrow().get(&val), Ok(Integer(2)));
 
+    }
+
+    #[test]
+    fn test_eval_user_defined_function() {
+        assert_eq!(error_str("Passed in too many arguments for this function. This function accepts 1 arguments"), call_eval("((\\ {x} {x}) 1 2)"));
+        println!("{:?}", call_eval("((\\ {x y} {x}) 1)"));
     }
 }
