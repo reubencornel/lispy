@@ -309,31 +309,41 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
 }
 
 fn eval_function (mut parameters: Vec<LispVal>, body: Vec<LispVal>, arguments: &Vec<Result<LispVal, LispVal>>, local_env: Option<Rc<RefCell<Environment>>>, global_env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    if arguments.len() > parameters.len() {
-        return error(format!("Passed in too many arguments for this function. This function accepts {} arguments", parameters.len()));
-    }
-
-    let mut result = if local_env.is_some() {
+    let mut result_env = if local_env.is_some() {
         local_env.unwrap().clone()
     } else {
-        global_env.clone()
+        Environment::new_with_parent(global_env.clone())
     };
+
 
     let args_len = arguments.len();
     let mut args_count = 0;
+    let mut params_len = parameters.len();
+    let mut function_params = match parameters.get(0){
+        Some(Qexpr(param_list)) => param_list.clone(),
+        Some(_) => unimplemented!(),
+        None => unimplemented!() // TODO fix this should be the case for function without arguments
+    };
 
     for i in 0..args_len {
-        result.clone().borrow_mut().put(parameters.get(0).unwrap().clone(), arguments.get(i).unwrap().clone().unwrap());
+        let arg = arguments.get(args_count).unwrap().clone().unwrap();
+        let param = function_params.get(0).unwrap();
         args_count = args_count + 1;
-        parameters.pop();
+        result_env.borrow_mut().put(param.clone(), arg);
+        function_params.remove(0);
     }
 
-    if (args_count < args_len) {
-        return Ok(LispVal::UserDefinedFunction(parameters, body, Some(result)));
-    }
-    // call eval with the body and local env
 
-    unimplemented!()
+    if args_len< params_len  {
+        return Ok(LispVal::UserDefinedFunction(function_params, body, Some(result_env)));
+    } else {
+
+        let body_sexpr = match body[0].clone() {
+            LispVal::Qexpr(elements) => LispVal::Sexpr(elements),
+            _ => unimplemented!()
+        };
+        return eval(&body_sexpr, result_env.clone());
+    }
 }
 
 
@@ -504,11 +514,7 @@ fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environ
 fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
     safe_execute(argument_results,
                  |args: &Vec<Result<LispVal, LispVal>>, e| {
-                     let val = match args[0].clone().unwrap() {
-                         LispVal::Qexpr(elements) => LispVal::Qexpr(elements),
-                         LispVal::Sexpr(elements) => LispVal::Sexpr(elements),
-                         v => v
-                     };
+                     let val = args[0].clone().unwrap();
                      eval(&val, e)
                  }, env)
 }
@@ -868,7 +874,17 @@ mod test{
 
     #[test]
     fn test_eval_user_defined_function() {
-        assert_eq!(error_str("Passed in too many arguments for this function. This function accepts 1 arguments"), call_eval("((\\ {x} {x}) 1 2)"));
-        println!("{:?}", call_eval("((\\ {x y} {x}) 1)"));
+//        assert_eq!(error_str("Passed in too many arguments for this function. This function accepts 1 arguments"), call_eval("((\\ {x} {x}) 1 2)"));
+//        println!("{:?}", call_eval("((\\ {x y} {x}) 1)"));
+        println!("{:?}", call_eval("((\\ {x} {x}) 5)"));
+//        println!("{:?}", call_eval("((\\ {x y} {* x y 5}) 5)"));
+
+        let mut env = build_env();
+        let (i, expr) = lispy("(def {add-mul} (\\ {x y} {+ x (* x y)}))").unwrap();
+
+        eval(&expr[0], env.clone());
+        let (i, expr) = lispy("(add-mul 10 20)").unwrap();
+        println!("{:?}", eval(&expr[0], env.clone()));
+
     }
 }
