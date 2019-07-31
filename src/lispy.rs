@@ -324,9 +324,12 @@ fn eval_function (mut parameters: Vec<LispVal>, body: Vec<LispVal>, arguments: &
 
     let args_len = arguments.len();
     let mut args_count = 0;
-    let mut params_len = parameters.len();
+    let mut params_len = 0;
     let mut function_params = match parameters.get(0){
-        Some(Qexpr(param_list)) => param_list.clone(),
+        Some(Qexpr(param_list)) => {
+            params_len = param_list.len();
+            param_list.clone()
+        },
         Some(_) => unimplemented!(),
         None => unimplemented!() // TODO fix this should be the case for function without arguments
     };
@@ -341,7 +344,7 @@ fn eval_function (mut parameters: Vec<LispVal>, body: Vec<LispVal>, arguments: &
 
 
     if args_len< params_len  {
-        return Ok(LispVal::UserDefinedFunction(function_params, body, Some(result_env)));
+        return Ok(LispVal::UserDefinedFunction(vec![LispVal::Qexpr(function_params)], body, Some(result_env)));
     } else {
         let body_sexpr = match body[0].clone() {
             LispVal::Qexpr(elements) => elements,
@@ -913,6 +916,8 @@ mod test{
         eval(&expr[0], env.clone());
         let (i, expr) = lispy("(add-mul 10 20)").unwrap();
         assert_eq!(Ok(LispVal::Integer(210)), eval(&expr[0], env.clone()));
+
+        assert_eq!(Ok(LispVal::Integer(2)), call_eval("(((\\ {a b} {(+ a b)}) 1) 1)"));
     }
 
 }
