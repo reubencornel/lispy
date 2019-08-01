@@ -171,7 +171,7 @@ fn float(input: &str) -> IResult<&str, LispVal> {
 
 
 fn symbol(input: &str) -> IResult<&str, LispVal> {
-    let (inp, result):(&str, Vec<&str>) = many1(alt((tag("+"), tag("*"), tag("/"), tag("-"),tag("="), tag("\\"), alphanumeric1)))(input)?;
+    let (inp, result):(&str, Vec<&str>) = many1(alt((tag("&"), tag("+"), tag("*"), tag("/"), tag("-"),tag("="), tag("\\"), alphanumeric1)))(input)?;
     let i_name: Vec<String> = result.iter().map(|x| x.to_string()).collect();
     Ok((inp, LispVal::Symbol(i_name.join(""))))
 }
@@ -290,7 +290,8 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
         },
         LispVal::UserDefinedFunction(name, body, local_env) => {
             return Ok(LispVal::UserDefinedFunction(name.clone(), body.clone(), local_env.clone()))
-        }
+        },
+        LispVal::BuiltInFunction(name, funct) => Ok(elements[0].clone()),
         _ => env.borrow().get(&elements[0])
     };
     match x {
@@ -333,15 +334,28 @@ fn eval_function (mut parameters: Vec<LispVal>, body: Vec<LispVal>, arguments: &
         Some(_) => unimplemented!(),
         None => unimplemented!() // TODO fix this should be the case for function without arguments
     };
-
+    let mut args_list: Vec<LispVal> = arguments.iter().map(|x| x.clone().unwrap()).collect();
+    let mut var_args_found = false;
     for i in 0..args_len {
-        let arg = arguments.get(args_count).unwrap().clone().unwrap();
         let param = function_params.get(0).unwrap();
+        if *param == Symbol("&".to_string()) {
+            function_params.remove(0);
+            var_args_found = true;
+            break;
+        }
+
+        let arg = args_list.get(0).unwrap();
         args_count = args_count + 1;
-        result_env.borrow_mut().put(param.clone(), arg);
+        result_env.borrow_mut().put(param.clone(), arg.clone());
         function_params.remove(0);
+        args_list.remove(0);
     }
 
+    if var_args_found {
+        let param = function_params.get(0).unwrap();
+        result_env.borrow_mut().put(param.clone(), Qexpr(args_list));
+        function_params.remove(0);
+    }
 
     if args_len< params_len  {
         return Ok(LispVal::UserDefinedFunction(vec![LispVal::Qexpr(function_params)], body, Some(result_env)));
@@ -546,7 +560,11 @@ fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Env
                      let val = args[0].clone().unwrap();
                      match val {
                          Qexpr(qelements) => {
-                             eval(&qelements[0], e)
+                             if qelements.len() == 1 {
+                                 eval(&qelements[0], e)
+                             } else {
+                                 eval(&Sexpr(qelements), e)
+                             }
                          }
                          _ => error_str("First argument to eval should be a qexpr")
                      }
@@ -918,6 +936,12 @@ mod test{
         assert_eq!(Ok(LispVal::Integer(210)), eval(&expr[0], env.clone()));
 
         assert_eq!(Ok(LispVal::Integer(2)), call_eval("(((\\ {a b} {(+ a b)}) 1) 1)"));
+    }
+
+    #[test]
+    fn test_variable_argument_functions() {
+        assert_eq!(Ok(LispVal::Integer(3)), call_eval("((\\ {a & b} {(+ a (eval (head b)))}) 1 2 3)"));
+        assert_eq!(Ok(LispVal::Integer(3)), call_eval("(eval (join (list +) {1 2}))"));
     }
 
 }
