@@ -28,7 +28,8 @@ enum LispVal {
     Sexpr(Vec<LispVal>),
     Qexpr(Vec<LispVal>),
     BuiltInFunction(String, fn(&Vec<LispVal>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>),
-    UserDefinedFunction(Vec<LispVal>, Vec<LispVal>, Option<Rc<RefCell<Environment>>>)
+    UserDefinedFunction(Vec<LispVal>, Vec<LispVal>, Option<Rc<RefCell<Environment>>>),
+    Boolean(bool)
 }
 
 impl Clone for LispVal {
@@ -41,7 +42,8 @@ impl Clone for LispVal {
             LispVal::Sexpr(exprs) => LispVal::Sexpr(exprs.clone()),
             LispVal::Qexpr(exprs) => LispVal::Qexpr(exprs.clone()),
             LispVal::BuiltInFunction(name, f) => LispVal::BuiltInFunction(name.clone(), *f),
-            LispVal::UserDefinedFunction(args, body, parent) => LispVal::UserDefinedFunction(args.clone(), body.clone(), parent.clone())
+            LispVal::UserDefinedFunction(args, body, parent) => LispVal::UserDefinedFunction(args.clone(), body.clone(), parent.clone()),
+            LispVal::Boolean(b) => LispVal::Boolean(b.clone())
         }
     }
 }
@@ -83,6 +85,10 @@ impl PartialEq for LispVal{
                         && body.iter().zip(body1.iter()).map(|(x, y)| x == y).fold(true, |x, y| x && y)
                 },
                 _ => false
+            },
+            LispVal::Boolean(b) => match other {
+                LispVal::Boolean(b1) => b == b1,
+                _ => false
             }
         }
     }
@@ -98,7 +104,8 @@ impl Debug for LispVal{
             LispVal::Sexpr(exprs) => write!(f, "Sexpr({:?})",exprs),
             LispVal::Qexpr(exprs) => write!(f, "Qexpr({:?})",exprs),
             LispVal::BuiltInFunction(name, _) => write!(f, "Builtin Function({})", name),
-            LispVal::UserDefinedFunction(args, _, _) => write!(f, "Function {:?}", &args[0])
+            LispVal::UserDefinedFunction(args, _, _) => write!(f, "Function {:?}", &args[0]),
+            LispVal::Boolean(b) => write!(f, "{:?}", b)
         }
     }
 }
@@ -653,7 +660,8 @@ fn print_val(expr: &LispVal) {
         LispVal::Sexpr(elements) => print_sexprs(elements.to_vec(), "(", ")", true),
         LispVal::Qexpr(elements) => print_sexprs(elements.to_vec(), "{", "}", true),
         LispVal::BuiltInFunction(name, _) => print!("<builtin function {}>", name),
-        LispVal::UserDefinedFunction(name, _, _) => print!("<user defined {}>", format!("{:?}", &name[0]))
+        LispVal::UserDefinedFunction(name, _, _) => print!("<user defined {}>", format!("{:?}", &name[0])),
+        LispVal::Boolean(b) => print!("{}", b)
     }
 }
 
