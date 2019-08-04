@@ -27,7 +27,7 @@ enum LispVal {
     Err(String),
     Sexpr(Vec<LispVal>),
     Qexpr(Vec<LispVal>),
-    BuiltInFunction(String, fn(&Vec<Result<LispVal, LispVal>>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>),
+    BuiltInFunction(String, fn(&Vec<LispVal>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>),
     UserDefinedFunction(Vec<LispVal>, Vec<LispVal>, Option<Rc<RefCell<Environment>>>)
 }
 
@@ -299,11 +299,12 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
         Ok(value) => match value {
             LispVal::BuiltInFunction(name, funct) => {
 
-                let argument_results: Vec<Result<LispVal, LispVal>> = if elements.len() > 1 {
-                    elements[1..].iter().map(|e| eval(e, env.clone())).collect()
+                let argument_results: Vec<LispVal> = if elements.len() > 1 {
+                    elements[1..].iter().map(|x| x.clone()).collect()
                 } else {
                     vec![]
                 };
+
                 funct(&argument_results, env.clone())
             },
             LispVal::UserDefinedFunction(parameters, body, local_env) => {
@@ -381,39 +382,40 @@ fn has_failure(argument_results: &Vec<Result<LispVal, LispVal>>) -> Option<&Resu
     })
 }
 
-fn safe_execute(argument_results: &Vec<Result<LispVal, LispVal>>,f: fn(&Vec<Result<LispVal, LispVal>>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    let failure = has_failure(argument_results);
+fn eval_args_and_safe_execute(arguments: &Vec<LispVal>, f: fn(&Vec<Result<LispVal, LispVal>>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    let argument_results: Vec<Result<LispVal, LispVal>> = arguments[0..].iter().map(|e| eval(e, env.clone())).collect();
+    let failure = has_failure(&argument_results);
     if failure.is_some() {
         failure.unwrap().clone()
     } else {
-        f(argument_results, env)
+        f(&argument_results, env)
     }
 }
 
-fn add(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
+fn add(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
                      number_function_eval(x, y, add_i64, add_f64) }),
-                 env)
+                               env)
 }
 
-fn sub(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
+fn sub(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
                      number_function_eval(x, y, sub_i64, sub_f64) }),
-                 env)
+                               env)
 }
 
-fn mul(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
+fn mul(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| args[1..].iter().fold(args[0].clone(), |x, y| {
                      number_function_eval(x, y, mul_i64, mul_f64)}),
-                 env)
+                               env)
 }
 
-fn builtin_lambda(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| {
+fn builtin_lambda(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| {
                      if args.len() < 2 {
                          return error_str("Lambda needs parameters & body")
                      }
@@ -427,9 +429,9 @@ fn builtin_lambda(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefC
                  }, env)
 }
 
-fn div(argument_results: &Vec<Result<LispVal, LispVal>>, env:Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| {
+fn div(argument_results: &Vec<LispVal>, env:Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| {
                      args[1..].iter().fold(args[0].clone(), |x, y| {
                          let divisor_is_zero = match y.clone().unwrap() {
                              LispVal::Integer(z) => z == 0,
@@ -442,25 +444,25 @@ fn div(argument_results: &Vec<Result<LispVal, LispVal>>, env:Rc<RefCell<Environm
                          } else {
                              number_function_eval(x, y, div_i64, div_f64)
                          }})},
-                 env)
+                               env)
 }
 
-fn list(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results, |args: &Vec<Result<LispVal, LispVal>>, e|  Ok(LispVal::Qexpr(args.iter().map(|x| x.clone().unwrap()).collect())), env)
+fn list(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results, |args: &Vec<Result<LispVal, LispVal>>, e|  Ok(LispVal::Qexpr(args.iter().map(|x| x.clone().unwrap()).collect())), env)
 }
 
-fn head(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
-    safe_execute(argument_results, |args, e| {
+fn head(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results, |args, e| {
         match args[0].clone().unwrap() {
             LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(vec![elements[0].clone()])),
             _ =>  Ok(LispVal::Qexpr(vec![args[0].clone().unwrap()]))
         }},
-                 env)
+                               env)
 }
 
-fn tail(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| {
+fn tail(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| {
                      match args[0].clone().unwrap() {
                          LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(elements[1..].iter().map(|x| x.clone()).collect())),
                          _ => Ok(LispVal::Qexpr(args[1..].iter().map(|x| x.clone().unwrap()).collect()))
@@ -468,9 +470,9 @@ fn tail(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Enviro
                  }, env)
 }
 
-fn join(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| {
+fn join(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| {
                      let mut return_val: Vec<LispVal> = vec![];
                      for arg in args {
                          match arg.clone().unwrap() {
@@ -497,11 +499,11 @@ fn is_symbol(val: &LispVal) -> bool {
     }
 }
 
-fn def_local(argument_results: &Vec<Result<LispVal, LispVal>>, env:Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn def_local(argument_results: &Vec<LispVal>, env:Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     def(argument_results, env.clone())
 }
 
-fn def_global(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn def_global(argument_results:&Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     if env.borrow().parent.is_none() {
         return def(argument_results, env);
     } else {
@@ -516,9 +518,9 @@ fn def_global(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<
 }
 
 
-fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args, e| {
+fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args, e| {
                      // TODO reuben check the clone
                      let values: Vec<LispVal> = args.iter().map(|x| x.clone().unwrap()).collect();
                      if !is_qexpr(&values[0]) {
@@ -554,9 +556,9 @@ fn def(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environ
 
 }
 
-fn fn_eval(argument_results: &Vec<Result<LispVal, LispVal>>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
-    safe_execute(argument_results,
-                 |args: &Vec<Result<LispVal, LispVal>>, e| {
+fn fn_eval(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args: &Vec<Result<LispVal, LispVal>>, e| {
                      let val = args[0].clone().unwrap();
                      match val {
                          Qexpr(qelements) => {
@@ -676,7 +678,7 @@ fn print_sexprs(elements: Vec<LispVal>, opening: &str, closing: &str, recursive:
 
 fn build_env<'a>() -> Rc<RefCell<Environment>> {
     let mut environment = Environment::new();
-    let add_to_env =  |name: &str, value: fn(&Vec<Result<LispVal, LispVal>>,  Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,e: Rc<RefCell<Environment>>|  {
+    let add_to_env =  |name: &str, value: fn(&Vec<LispVal>,  Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,e: Rc<RefCell<Environment>>|  {
         e.borrow_mut().put(LispVal::Symbol(name.to_string()), LispVal::BuiltInFunction(name.to_string(), value));
     };
 
@@ -818,16 +820,16 @@ mod test{
 
     #[test]
     fn test_def() {
-        let argument_list = vec![Ok(LispVal::Sexpr(vec![]))];
+        let argument_list = vec![LispVal::Integer(1)];
         assert_eq!( def(&argument_list,build_env()), error_str("Expected the first argument to the a Qexpr"));
 
-        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]))];
+        let argument_list = vec![LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())])];
         assert_eq!(def(&argument_list, build_env()), error_str("Number of symbols to values don't match"));
 
-        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Integer(10)])), Ok(LispVal::Integer(10))];
+        let argument_list = vec![LispVal::Qexpr(vec![LispVal::Integer(10)]), LispVal::Integer(10)];
         assert_eq!(def(&argument_list, build_env()), error_str("All values of the first argument must be symbols")); //, Ok(Sexpr(vec![])));
 
-        let argument_list = vec![Ok(LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())])), Ok(LispVal::Integer(10))];
+        let argument_list = vec![LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]), LispVal::Integer(10)];
         let mut environment = build_env();
         assert_eq!(def(&argument_list, environment.clone()), Ok(Sexpr(vec![])));
         let sym= LispVal::Symbol("a".to_string());
@@ -841,8 +843,8 @@ mod test{
         assert_eq!(join(&args, environment.clone() ), Ok(Qexpr(vec![Symbol("1".to_string()), Symbol("2".to_string()), Symbol("3".to_string()), Symbol("4".to_string()), Symbol("5".to_string()), Symbol("6".to_string())])))
     }
 
-    fn get_argument_qexpr(strs: Vec<&str>) -> Result<LispVal, LispVal> {
-        Ok(LispVal::Qexpr(get_symbol_vector(strs)))
+    fn get_argument_qexpr(strs: Vec<&str>) -> LispVal {
+        LispVal::Qexpr(get_symbol_vector(strs))
     }
 
     fn get_symbol_vector(strs: Vec<&str>) -> Vec<LispVal> {
@@ -879,11 +881,11 @@ mod test{
             let mut e2 = Environment::new_with_parent(e1.clone());
             let val1 = LispVal::Symbol("c".to_string());
 
-            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(1))];
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(1)];
             def_global(&arguments, e2.clone());
             assert_eq!(e2.borrow().get(&val), Ok(Integer(1)));
 
-            let arguments = vec![get_argument_qexpr(vec!["b"]), Ok(Integer(3))];
+            let arguments = vec![get_argument_qexpr(vec!["b"]), Integer(3)];
             let val1 = LispVal::Symbol("b".to_string());
             def_local(&arguments,e2.clone());
             assert_eq!(e2.borrow().get(&val1), Ok(Integer(3)));
@@ -903,17 +905,17 @@ mod test{
             let mut e2 = Environment::new_with_parent(e1.clone());
             let mut e3 = Environment::new_with_parent(e1.clone());
 
-            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(1))];
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(1)];
             def_global(&arguments, e2.clone());
             assert_eq!(e2.borrow().get(&val), Ok(Integer(1)));
             assert_eq!(e3.borrow().get(&val), Ok(Integer(1)));
 
-            let arguments = vec![get_argument_qexpr(vec!["a"]), Ok(Integer(2))];
+            let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(2)];
             def_global(&arguments, e3.clone());
             assert_eq!(e2.borrow().get(&val), Ok(Integer(2)));
             assert_eq!(e3.borrow().get(&val), Ok(Integer(2)));
 
-            let arguments = vec![get_argument_qexpr(vec!["b"]), Ok(Integer(3))];
+            let arguments = vec![get_argument_qexpr(vec!["b"]), Integer(3)];
             let val1 = LispVal::Symbol("b".to_string());
             def_local(&arguments, e2.clone());
             assert_eq!(e2.borrow().get(&val1), Ok(Integer(3)));
