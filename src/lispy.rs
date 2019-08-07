@@ -454,6 +454,24 @@ fn div(argument_results: &Vec<LispVal>, env:Rc<RefCell<Environment>>) -> Result<
                                env)
 }
 
+
+fn if_func(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+    if argument_results.len() < 3 || argument_results.len() > 3 {
+        error_str("Expect 3 arguments to if: predicate, if block, else block")
+    } else {
+        let predicate_result = fn_eval(&(vec![argument_results[0].clone()]), env.clone());
+        if predicate_result.is_err() {
+            predicate_result
+        } else {
+            if predicate_result.unwrap() == LispVal::Boolean(true) {
+                fn_eval(&(vec![argument_results[1].clone()]), env.clone())
+            } else {
+                fn_eval(&(vec![argument_results[2].clone()]), env.clone())
+            }
+        }
+    }
+}
+
 fn list(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(argument_results, |args: &Vec<Result<LispVal, LispVal>>, e|  Ok(LispVal::Qexpr(args.iter().map(|x| x.clone().unwrap()).collect())), env)
 }
@@ -562,6 +580,16 @@ fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
                  }, env)
 
 }
+
+
+fn fn_equal(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
+    eval_args_and_safe_execute(argument_results,
+                               |args: &Vec<Result<LispVal, LispVal>>, e| {
+                                   Ok(LispVal::Boolean(args[0] == args[1]))
+                               }
+                                  , env)
+}
+
 
 fn fn_eval(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>)-> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(argument_results,
@@ -694,10 +722,12 @@ fn build_env<'a>() -> Rc<RefCell<Environment>> {
     add_to_env("-", sub, environment.clone());
     add_to_env("*", mul, environment.clone());
     add_to_env("/", div, environment.clone());
+    add_to_env("==", fn_equal, environment.clone());;
     add_to_env("list", list, environment.clone());
     add_to_env("head", head, environment.clone());
     add_to_env("tail", tail, environment.clone());
     add_to_env("eval", fn_eval, environment.clone());
+    add_to_env("if", if_func, environment.clone());
     add_to_env("def", def_global, environment.clone());
     add_to_env("=", def_local, environment.clone());
     add_to_env("join", join, environment.clone());
@@ -954,4 +984,10 @@ mod test{
         assert_eq!(Ok(LispVal::Integer(3)), call_eval("(eval (join (list +) {1 2}))"));
     }
 
+    #[test]
+    fn test_if(){
+        assert_eq!(Ok(LispVal::Integer(4)), call_eval("(if {(== 1 1)} {(+ 2 2)} {3})"));
+        assert_eq!(Ok(LispVal::Integer(3)), call_eval("(if {(== 1 2)} {(+ 2 2)} {3})"));
+
+    }
 }
