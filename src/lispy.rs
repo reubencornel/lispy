@@ -10,9 +10,7 @@ use std::rc::Rc;
 
 use nom::branch::alt;
 use nom::bytes::complete::tag;
-use nom::character::complete::{
-    alphanumeric1, digit0, digit1, multispace0, multispace1, space0, space1,
-};
+use nom::character::complete::{alphanumeric1, digit0, digit1, multispace0, multispace1};
 use nom::combinator::opt;
 use nom::multi::{many0, many1, separated_list};
 use nom::sequence::tuple;
@@ -31,7 +29,7 @@ enum LispVal {
     Qexpr(Vec<LispVal>),
     BuiltInFunction(
         String,
-        fn(&Vec<LispVal>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,
+        fn(&[LispVal], Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,
     ),
     UserDefinedFunction(Vec<LispVal>, Vec<LispVal>, Option<Rc<RefCell<Environment>>>),
     Boolean(bool),
@@ -40,8 +38,8 @@ enum LispVal {
 impl Clone for LispVal {
     fn clone(&self) -> Self {
         match self {
-            LispVal::Float(f) => LispVal::Float(f.clone()),
-            LispVal::Integer(i) => LispVal::Integer(i.clone()),
+            LispVal::Float(f) => LispVal::Float(*f),
+            LispVal::Integer(i) => LispVal::Integer(*i),
             LispVal::Symbol(s) => LispVal::Symbol(s.clone()),
             LispVal::Err(s) => LispVal::Err(s.clone()),
             LispVal::Sexpr(exprs) => LispVal::Sexpr(exprs.clone()),
@@ -50,7 +48,7 @@ impl Clone for LispVal {
             LispVal::UserDefinedFunction(args, body, parent) => {
                 LispVal::UserDefinedFunction(args.clone(), body.clone(), parent.clone())
             }
-            LispVal::Boolean(b) => LispVal::Boolean(b.clone()),
+            LispVal::Boolean(b) => LispVal::Boolean(*b),
         }
     }
 }
@@ -82,8 +80,8 @@ impl PartialEq for LispVal {
                 LispVal::Qexpr(i1) => i == i1,
                 _ => false,
             },
-            LispVal::BuiltInFunction(i, f) => match other {
-                LispVal::BuiltInFunction(i1, f1) => i == i1,
+            LispVal::BuiltInFunction(i, _) => match other {
+                LispVal::BuiltInFunction(i1, _) => i == i1,
                 _ => false,
             },
             LispVal::UserDefinedFunction(args, body, _) => match other {
@@ -91,12 +89,12 @@ impl PartialEq for LispVal {
                     args.iter()
                         .zip(args1.iter())
                         .map(|(x, y)| x == y)
-                        .fold(true, |x, y| x && y)
+                        .all(|y| y)
                         && body
                             .iter()
                             .zip(body1.iter())
                             .map(|(x, y)| x == y)
-                            .fold(true, |x, y| x && y)
+                            .all(|y| y)
                 }
                 _ => false,
             },
@@ -134,13 +132,6 @@ impl Environment {
     pub fn new() -> Rc<RefCell<Environment>> {
         Rc::new(RefCell::new(Environment {
             env: RefCell::new(HashMap::new()),
-            parent: Option::None,
-        }))
-    }
-
-    pub fn new_with_map(map: HashMap<String, LispVal>) -> Rc<RefCell<Environment>> {
-        Rc::new(RefCell::new(Environment {
-            env: RefCell::new(map),
             parent: Option::None,
         }))
     }
@@ -224,7 +215,7 @@ fn integer(input: &str) -> IResult<&str, LispVal> {
 
     Ok((
         i2,
-        LispVal::Integer(minus_sign.map(|_| i * -1).or_else(|| Some(i)).unwrap()),
+        LispVal::Integer(minus_sign.map(|_| -i).or_else(|| Some(i)).unwrap()),
     ))
 }
 
@@ -233,7 +224,7 @@ fn number(input: &str) -> IResult<&str, LispVal> {
 }
 
 fn sexpr(input: &str) -> IResult<&str, LispVal> {
-    let (inp, (t, s0, op, s, nums, t1)) = tuple((
+    let (inp, (_, _, op, _, nums, _)) = tuple((
         tag("("),
         multispace0,
         expr,
@@ -247,21 +238,8 @@ fn sexpr(input: &str) -> IResult<&str, LispVal> {
     Ok((inp, LispVal::Sexpr(vec)))
 }
 
-//fn func_parameter_qexpr(input: &str) -> IResult<&str, LispVal> {
-//    let (inp, (t, s0, op, s, nums, t1)) = tuple((tag("{"),space0,  symbol, space0, separated_list(space1, symbol), tag("}")))(input)?;
-//    let mut vec: Vec<LispVal> = Vec::new();
-//    vec.push(op);
-//    vec.extend(nums.iter().cloned());
-//    Ok((inp, LispVal::Qexpr(vec)))
-//}
-
-//fn lambda(input: &str) -> IResult<&str, LispVal> {
-//    let (inp, (lmbda, s, args, s1,body)) = tuple((tag("\\"), space1, func_parameter_qexpr,space1, qexpr))(input)?;
-//    Ok((inp, LispVal::UserDefinedFunction(vec![args], vec![body], Option::None)))
-//}
-
 fn qexpr(input: &str) -> IResult<&str, LispVal> {
-    let (inp, (t, s0, op, s, nums, t1)) = tuple((
+    let (inp, (_, _, op, _, nums, _)) = tuple((
         tag("{"),
         multispace0,
         expr,
@@ -276,8 +254,7 @@ fn qexpr(input: &str) -> IResult<&str, LispVal> {
 }
 
 fn expr(input: &str) -> IResult<&str, LispVal> {
-    let result = alt((number, symbol, sexpr, qexpr))(input);
-    result
+    alt((number, symbol, sexpr, qexpr))(input)
 }
 
 fn space_expr(input: &str) -> IResult<&str, LispVal> {
@@ -313,13 +290,13 @@ fn error_str(message: &str) -> Result<LispVal, LispVal> {
 
 fn eval(expr: &LispVal, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     match expr {
-        LispVal::Integer(x) => Ok(LispVal::Integer(x.clone())),
-        LispVal::Float(x) => Ok(LispVal::Float(x.clone())),
+        LispVal::Integer(x) => Ok(LispVal::Integer(*x)),
+        LispVal::Float(x) => Ok(LispVal::Float(*x)),
         LispVal::Symbol(sym) => {
             let val = LispVal::Symbol(sym.clone());
             match env.borrow().get(&val) {
                 Ok(value) => Ok(value),
-                Err(value) => error(format!("Symbol {} not found", sym)),
+                Err(_) => error(format!("Symbol {} not found", sym)),
             }
         }
         LispVal::Sexpr(elements) => eval_sexpr(elements, env),
@@ -335,18 +312,11 @@ fn eval(expr: &LispVal, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVa
     }
 }
 
-fn user_defined_function_eval(
-    elements: &Vec<LispVal>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<LispVal, LispVal> {
-    unimplemented!()
+fn eval_qexpr(elements: &[LispVal]) -> Result<LispVal, LispVal> {
+    Ok(LispVal::Qexpr(elements.to_vec()))
 }
 
-fn eval_qexpr(elements: &Vec<LispVal>) -> Result<LispVal, LispVal> {
-    Ok(LispVal::Qexpr(elements.iter().map(|x| x.clone()).collect()))
-}
-
-fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn eval_sexpr(elements: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     let x = match &elements[0] {
         LispVal::Sexpr(values) => eval_sexpr(values, env.clone()),
         LispVal::UserDefinedFunction(name, body, local_env) => {
@@ -356,15 +326,15 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
                 local_env.clone(),
             ))
         }
-        LispVal::BuiltInFunction(name, funct) => Ok(elements[0].clone()),
+        LispVal::BuiltInFunction(_, _) => Ok(elements[0].clone()),
         _ => env.borrow().get(&elements[0]),
     };
     match x {
         Err(_) => error_str("The first element of an sexpr should be a valid symbol"),
         Ok(value) => match value {
-            LispVal::BuiltInFunction(name, funct) => {
+            LispVal::BuiltInFunction(_, funct) => {
                 let argument_results: Vec<LispVal> = if elements.len() > 1 {
-                    elements[1..].iter().map(|x| x.clone()).collect()
+                    elements[1..].to_vec()
                 } else {
                     vec![]
                 };
@@ -382,20 +352,19 @@ fn eval_sexpr(elements: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<
 }
 
 fn eval_function(
-    mut parameters: Vec<LispVal>,
+    parameters: Vec<LispVal>,
     body: Vec<LispVal>,
-    arguments: &Vec<Result<LispVal, LispVal>>,
+    arguments: &[Result<LispVal, LispVal>],
     local_env: Option<Rc<RefCell<Environment>>>,
     global_env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
-    let mut result_env = if local_env.is_some() {
+    let result_env = if local_env.is_some() {
         local_env.unwrap().clone()
     } else {
         Environment::new_with_parent(global_env.clone())
     };
 
     let args_len = arguments.len();
-    let mut args_count = 0;
     let mut params_len = 0;
     let mut function_params = match parameters.get(0) {
         Some(Qexpr(param_list)) => {
@@ -416,7 +385,6 @@ fn eval_function(
         }
 
         let arg = args_list.get(0).unwrap();
-        args_count = args_count + 1;
         result_env.borrow_mut().put(param.clone(), arg.clone());
         function_params.remove(0);
         args_list.remove(0);
@@ -429,11 +397,11 @@ fn eval_function(
     }
 
     if args_len < params_len {
-        return Ok(LispVal::UserDefinedFunction(
+        Ok(LispVal::UserDefinedFunction(
             vec![LispVal::Qexpr(function_params)],
             body,
             Some(result_env),
-        ));
+        ))
     } else {
         let body_sexpr = match body[0].clone() {
             LispVal::Qexpr(elements) => elements,
@@ -448,17 +416,12 @@ fn eval_function(
     }
 }
 
-fn has_failure(
-    argument_results: &Vec<Result<LispVal, LispVal>>,
-) -> Option<&Result<LispVal, LispVal>> {
-    argument_results.iter().find(|x| match x {
-        Ok(e) => false,
-        Err(e) => true,
-    })
+fn has_failure(argument_results: &[Result<LispVal, LispVal>]) -> Option<&Result<LispVal, LispVal>> {
+    argument_results.iter().find(|x| x.is_err())
 }
 
 fn eval_args_and_safe_execute(
-    arguments: &Vec<LispVal>,
+    arguments: &[LispVal],
     f: fn(&Vec<Result<LispVal, LispVal>>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
@@ -474,10 +437,10 @@ fn eval_args_and_safe_execute(
     }
 }
 
-fn add(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn add(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| {
+        |args, _| {
             args[1..].iter().fold(args[0].clone(), |x, y| {
                 number_function_eval(x, y, add_i64, add_f64)
             })
@@ -486,10 +449,10 @@ fn add(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
     )
 }
 
-fn sub(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn sub(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| {
+        |args, _| {
             args[1..].iter().fold(args[0].clone(), |x, y| {
                 number_function_eval(x, y, sub_i64, sub_f64)
             })
@@ -498,10 +461,10 @@ fn sub(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
     )
 }
 
-fn mul(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn mul(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| {
+        |args, _| {
             args[1..].iter().fold(args[0].clone(), |x, y| {
                 number_function_eval(x, y, mul_i64, mul_f64)
             })
@@ -511,7 +474,7 @@ fn mul(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
 }
 
 fn builtin_lambda(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
@@ -536,10 +499,10 @@ fn builtin_lambda(
     )
 }
 
-fn div(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn div(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| {
+        |args, _| {
             args[1..].iter().fold(args[0].clone(), |x, y| {
                 let divisor_is_zero = match y.clone().unwrap() {
                     LispVal::Integer(z) => z == 0,
@@ -559,32 +522,27 @@ fn div(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
 }
 
 fn if_func(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     if argument_results.len() < 3 || argument_results.len() > 3 {
         error_str("Expect 3 arguments to if: predicate, if block, else block")
     } else {
-        let predicate_result = fn_eval(&(vec![argument_results[0].clone()]), env.clone());
+        let predicate_result = fn_eval(&([argument_results[0].clone()]), env.clone());
         if predicate_result.is_err() {
             predicate_result
+        } else if predicate_result.unwrap() == LispVal::Boolean(true) {
+            fn_eval(&([argument_results[1].clone()]), env.clone())
         } else {
-            if predicate_result.unwrap() == LispVal::Boolean(true) {
-                fn_eval(&(vec![argument_results[1].clone()]), env.clone())
-            } else {
-                fn_eval(&(vec![argument_results[2].clone()]), env.clone())
-            }
+            fn_eval(&([argument_results[2].clone()]), env.clone())
         }
     }
 }
 
-fn list(
-    argument_results: &Vec<LispVal>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<LispVal, LispVal> {
+fn list(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args: &Vec<Result<LispVal, LispVal>>, e| {
+        |args: &Vec<Result<LispVal, LispVal>>, _| {
             Ok(LispVal::Qexpr(
                 args.iter().map(|x| x.clone().unwrap()).collect(),
             ))
@@ -593,13 +551,10 @@ fn list(
     )
 }
 
-fn head(
-    argument_results: &Vec<LispVal>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<LispVal, LispVal> {
+fn head(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| match args[0].clone().unwrap() {
+        |args, _| match args[0].clone().unwrap() {
             LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(vec![elements[0].clone()])),
             _ => Ok(LispVal::Qexpr(vec![args[0].clone().unwrap()])),
         },
@@ -607,16 +562,11 @@ fn head(
     )
 }
 
-fn tail(
-    argument_results: &Vec<LispVal>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<LispVal, LispVal> {
+fn tail(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| match args[0].clone().unwrap() {
-            LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(
-                elements[1..].iter().map(|x| x.clone()).collect(),
-            )),
+        |args, _| match args[0].clone().unwrap() {
+            LispVal::Qexpr(elements) => Ok(LispVal::Qexpr(elements[1..].to_vec())),
             _ => Ok(LispVal::Qexpr(
                 args[1..].iter().map(|x| x.clone().unwrap()).collect(),
             )),
@@ -625,13 +575,10 @@ fn tail(
     )
 }
 
-fn join(
-    argument_results: &Vec<LispVal>,
-    env: Rc<RefCell<Environment>>,
-) -> Result<LispVal, LispVal> {
+fn join(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args, e| {
+        |args, _| {
             let mut return_val: Vec<LispVal> = vec![];
             for arg in args {
                 match arg.clone().unwrap() {
@@ -660,28 +607,28 @@ fn is_symbol(val: &LispVal) -> bool {
 }
 
 fn def_local(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     def(argument_results, env.clone())
 }
 
 fn def_global(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     if env.borrow().parent.is_none() {
-        return def(argument_results, env);
+        def(argument_results, env)
     } else {
         let p = &env.borrow().parent;
         match p {
             Some(parent) => def(argument_results, parent.clone()),
-            None => return error_str("Unexpted case"),
+            None => error_str("Unexpted case"),
         }
     }
 }
 
-fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
+fn def(argument_results: &[LispVal], env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
         |args, e| {
@@ -696,10 +643,10 @@ fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
                 LispVal::Qexpr(values) => values
                     .iter()
                     .map(|x| {
-                        count = count + 1;
+                        count += 1;
                         is_symbol(x)
                     })
-                    .fold(true, |x, y| x && y),
+                    .all(|x| x),
                 _ => false,
             };
             if !all_symbols {
@@ -714,7 +661,7 @@ fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
             if let LispVal::Qexpr(vs) = &values[0] {
                 vs.iter().for_each(|x| {
                     e.borrow_mut().put(x.clone(), values[count].clone());
-                    count = count + 1;
+                    count += 1;
                 })
             };
             Ok(Sexpr(vec![]))
@@ -724,18 +671,18 @@ fn def(argument_results: &Vec<LispVal>, env: Rc<RefCell<Environment>>) -> Result
 }
 
 fn fn_equal(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
         argument_results,
-        |args: &Vec<Result<LispVal, LispVal>>, e| Ok(LispVal::Boolean(args[0] == args[1])),
+        |args: &Vec<Result<LispVal, LispVal>>, _| Ok(LispVal::Boolean(args[0] == args[1])),
         env,
     )
 }
 
 fn fn_eval(
-    argument_results: &Vec<LispVal>,
+    argument_results: &[LispVal],
     env: Rc<RefCell<Environment>>,
 ) -> Result<LispVal, LispVal> {
     eval_args_and_safe_execute(
@@ -839,7 +786,7 @@ fn print_val(expr: &LispVal) {
     }
 }
 
-fn print_expr(expr: &Vec<LispVal>, recursive: bool) {
+fn print_expr(expr: &[LispVal], recursive: bool) {
     for e in expr.iter() {
         print_val(e);
         print!(" ");
@@ -858,11 +805,11 @@ fn print_sexprs(elements: Vec<LispVal>, opening: &str, closing: &str, recursive:
     }
 }
 
-fn build_env<'a>() -> Rc<RefCell<Environment>> {
-    let mut environment = Environment::new();
+fn build_env() -> Rc<RefCell<Environment>> {
+    let environment = Environment::new();
     let add_to_env =
         |name: &str,
-         value: fn(&Vec<LispVal>, Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,
+         value: fn(&[LispVal], Rc<RefCell<Environment>>) -> Result<LispVal, LispVal>,
          e: Rc<RefCell<Environment>>| {
             e.borrow_mut().put(
                 LispVal::Symbol(name.to_string()),
@@ -889,17 +836,17 @@ fn build_env<'a>() -> Rc<RefCell<Environment>> {
 
 fn main() {
     let mut rl = Editor::<()>::new();
-    rl.load_history("lisp_history.txt");
-    let mut env = build_env();
+    rl.load_history("lisp_history.txt").unwrap();
+    let env = build_env();
     loop {
         let readline = rl.readline("lisp> ");
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
                 match parse(&line) {
-                    Ok((str, expr)) => match eval(&expr[0], env.clone()) {
-                        Ok(value) => print_expr(&(vec![value]), false),
-                        Err(value) => print_expr(&(vec![value]), false),
+                    Ok((_, expr)) => match eval(&expr[0], env.clone()) {
+                        Ok(value) => print_expr(&([value]), false),
+                        Err(value) => print_expr(&([value]), false),
                     },
                     Err(error) => println!("Error {:?}", error),
                 }
@@ -912,15 +859,15 @@ fn main() {
                 println!("Bye Fren!!");
                 break;
             }
-            Err(err) => {
+            Err(_) => {
                 println!("Why you do this, Fren??");
                 break;
             }
         }
     }
 
-    let x = LispVal::BuiltInFunction("head".to_string(), head);
-    rl.save_history("lisp_history.txt");
+    //    let x = LispVal::BuiltInFunction("head".to_string(), head);
+    rl.save_history("lisp_history.txt").unwrap();
 }
 
 #[cfg(test)]
