@@ -238,7 +238,12 @@ fn sexpr(input: &str) -> IResult<&str, LispVal> {
     Ok((inp, LispVal::Sexpr(vec)))
 }
 
-fn qexpr(input: &str) -> IResult<&str, LispVal> {
+fn empty_qexpr(input: &str) -> IResult<&str, LispVal> {
+    let (inp, (_, _, _)) = tuple((tag("{"), multispace0, tag("}")))(input)?;
+    Ok((inp, LispVal::Qexpr(vec![])))
+}
+
+fn non_empty_qexpr(input: &str) -> IResult<&str, LispVal> {
     let (inp, (_, _, op, _, nums, _)) = tuple((
         tag("{"),
         multispace0,
@@ -251,6 +256,10 @@ fn qexpr(input: &str) -> IResult<&str, LispVal> {
     vec.push(op);
     vec.extend(nums.iter().cloned());
     Ok((inp, LispVal::Qexpr(vec)))
+}
+
+fn qexpr(input: &str) -> IResult<&str, LispVal> {
+    alt((non_empty_qexpr, empty_qexpr))(input)
 }
 
 fn boolean(input: &str) -> IResult<&str, LispVal> {
@@ -387,7 +396,7 @@ fn eval_function(
     };
     let mut args_list: Vec<LispVal> = arguments.iter().map(|x| x.clone().unwrap()).collect();
     let mut var_args_found = false;
-    for i in 0..args_len {
+    for _ in 0..args_len {
         let param = function_params.get(0).unwrap();
         if *param == Symbol("&".to_string()) {
             function_params.remove(0);
@@ -883,7 +892,6 @@ fn main() {
 
 #[cfg(test)]
 mod test {
-    use std::any::Any;
 
     use nom::IResult;
 
@@ -893,6 +901,7 @@ mod test {
     use {lispy, LispVal};
     use {number, symbol};
     //    use ::{def, error_str};
+    use empty_qexpr;
     use LispVal::{Float, Integer, Qexpr, Sexpr, Symbol, UserDefinedFunction};
     use {boolean, def};
     use {def_global, def_local};
@@ -923,7 +932,7 @@ mod test {
     fn test_expr_parsing() {
         let result = lispy("+ 123.12 12");
         assert!(result.is_ok());
-        let (remaining, lisp_val) = result.unwrap();
+        let (_remaining, lisp_val) = result.unwrap();
         assert_eq!(3, lisp_val.len());
         assert_eq!(LispVal::Symbol("+".to_string()), lisp_val[0]);
         assert_eq!(LispVal::Float(123.12), lisp_val[1]);
@@ -931,7 +940,7 @@ mod test {
 
         let result = lispy("(/ 1 1 (/ 1 0) 1)");
         assert!(result.is_ok());
-        let (remaining, value) = result.unwrap();
+        let (_remaining, value) = result.unwrap();
         assert_eq!(
             vec![Sexpr(vec![
                 Symbol("/".to_string()),
@@ -978,8 +987,8 @@ mod test {
     }
 
     fn call_eval(input: &str) -> Result<LispVal, LispVal> {
-        let (i, expr) = lispy(input).unwrap();
-        let mut env = build_env();
+        let (_i, expr) = lispy(input).unwrap();
+        let env = build_env();
         eval(&expr[0], env.clone())
     }
 
@@ -1010,7 +1019,7 @@ mod test {
             LispVal::Qexpr(vec![LispVal::Symbol("a".to_string())]),
             LispVal::Integer(10),
         ];
-        let mut environment = build_env();
+        let environment = build_env();
         assert_eq!(def(&argument_list, environment.clone()), Ok(Sexpr(vec![])));
         let sym = LispVal::Symbol("a".to_string());
         assert_eq!(environment.borrow().get(&sym), Ok(Integer(10)));
@@ -1023,7 +1032,7 @@ mod test {
             get_argument_qexpr(vec!["3", "4"]),
             get_argument_qexpr(vec!["5", "6"]),
         ];
-        let mut environment = build_env();
+        let environment = build_env();
         assert_eq!(
             join(&args, environment.clone()),
             Ok(Qexpr(vec![
@@ -1062,12 +1071,12 @@ mod test {
 
     #[test]
     fn test_environment_get() {
-        let mut e1 = build_env();
+        let e1 = build_env();
         e1.borrow_mut().put(
             LispVal::Symbol("a".to_string()),
             LispVal::Symbol("b".to_string()),
         );
-        let mut e2 = Environment::new_with_parent(e1.clone());
+        let e2 = Environment::new_with_parent(e1.clone());
         let val = LispVal::Symbol("a".to_string());
         let val1 = LispVal::Symbol("c".to_string());
 
@@ -1082,20 +1091,20 @@ mod test {
 
     #[test]
     fn test_environment_def() {
-        let mut e1 = build_env();
+        let e1 = build_env();
         let val = LispVal::Symbol("a".to_string());
 
         {
-            let mut e2 = Environment::new_with_parent(e1.clone());
-            let val1 = LispVal::Symbol("c".to_string());
+            let e2 = Environment::new_with_parent(e1.clone());
+            let _val1 = LispVal::Symbol("c".to_string());
 
             let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(1)];
-            def_global(&arguments, e2.clone());
+            def_global(&arguments, e2.clone()).unwrap();
             assert_eq!(e2.borrow().get(&val), Ok(Integer(1)));
 
             let arguments = vec![get_argument_qexpr(vec!["b"]), Integer(3)];
             let val1 = LispVal::Symbol("b".to_string());
-            def_local(&arguments, e2.clone());
+            def_local(&arguments, e2.clone()).unwrap();
             assert_eq!(e2.borrow().get(&val1), Ok(Integer(3)));
             assert_eq!(
                 e1.borrow().get(&val1),
@@ -1107,26 +1116,26 @@ mod test {
 
     #[test]
     fn test_environment_with_parent() {
-        let mut e1 = build_env();
+        let e1 = build_env();
         let val = LispVal::Symbol("a".to_string());
 
         {
-            let mut e2 = Environment::new_with_parent(e1.clone());
-            let mut e3 = Environment::new_with_parent(e1.clone());
+            let e2 = Environment::new_with_parent(e1.clone());
+            let e3 = Environment::new_with_parent(e1.clone());
 
             let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(1)];
-            def_global(&arguments, e2.clone());
+            def_global(&arguments, e2.clone()).unwrap();
             assert_eq!(e2.borrow().get(&val), Ok(Integer(1)));
             assert_eq!(e3.borrow().get(&val), Ok(Integer(1)));
 
             let arguments = vec![get_argument_qexpr(vec!["a"]), Integer(2)];
-            def_global(&arguments, e3.clone());
+            def_global(&arguments, e3.clone()).unwrap();
             assert_eq!(e2.borrow().get(&val), Ok(Integer(2)));
             assert_eq!(e3.borrow().get(&val), Ok(Integer(2)));
 
             let arguments = vec![get_argument_qexpr(vec!["b"]), Integer(3)];
             let val1 = LispVal::Symbol("b".to_string());
-            def_local(&arguments, e2.clone());
+            def_local(&arguments, e2.clone()).unwrap();
             assert_eq!(e2.borrow().get(&val1), Ok(Integer(3)));
             assert_eq!(
                 e1.borrow().get(&val1),
@@ -1152,10 +1161,10 @@ mod test {
         );
         assert_eq!(Ok(LispVal::Integer(5)), call_eval("((\\ {x} {x}) 5)"));
 
-        let mut env = build_env();
-        let (i, expr) = lispy("(def {add-mul} (\\ {x y} {+ x (* x y)}))").unwrap();
-        eval(&expr[0], env.clone());
-        let (i, expr) = lispy("(add-mul 10 20)").unwrap();
+        let env = build_env();
+        let (_i, expr) = lispy("(def {add-mul} (\\ {x y} {+ x (* x y)}))").unwrap();
+        eval(&expr[0], env.clone()).unwrap();
+        let (_i, expr) = lispy("(add-mul 10 20)").unwrap();
         assert_eq!(Ok(LispVal::Integer(210)), eval(&expr[0], env.clone()));
 
         assert_eq!(
@@ -1196,4 +1205,11 @@ mod test {
         let (_, x): (&str, LispVal) = boolean("false").unwrap();
         assert_eq!(LispVal::Boolean(false), x);
     }
+
+    #[test]
+    fn test_parse_empty_qexpr() {
+        let (_, x): (&str, LispVal) = empty_qexpr("{}").unwrap();
+        assert_eq!(LispVal::Qexpr(vec![]), x);
+    }
+
 }
