@@ -253,8 +253,19 @@ fn qexpr(input: &str) -> IResult<&str, LispVal> {
     Ok((inp, LispVal::Qexpr(vec)))
 }
 
+fn boolean(input: &str) -> IResult<&str, LispVal> {
+    let result: IResult<&str, &str> = alt((tag("true"), tag("false")))(input);
+    result.map(|(inp, value): (&str, &str)| {
+        if value == "true" {
+            (inp, LispVal::Boolean(true))
+        } else {
+            (inp, LispVal::Boolean(false))
+        }
+    })
+}
+
 fn expr(input: &str) -> IResult<&str, LispVal> {
-    alt((number, symbol, sexpr, qexpr))(input)
+    alt((number, symbol, sexpr, qexpr, boolean))(input)
 }
 
 fn space_expr(input: &str) -> IResult<&str, LispVal> {
@@ -882,8 +893,8 @@ mod test {
     use {lispy, LispVal};
     use {number, symbol};
     //    use ::{def, error_str};
-    use def;
     use LispVal::{Float, Integer, Qexpr, Sexpr, Symbol, UserDefinedFunction};
+    use {boolean, def};
     use {def_global, def_local};
     use {error_str, Environment};
 
@@ -1175,5 +1186,14 @@ mod test {
             Ok(LispVal::Integer(3)),
             call_eval("(if {(== 1 2)} {(+ 2 2)} {3})")
         );
+    }
+
+    #[test]
+    fn test_parse_boolean() {
+        let (_, x): (&str, LispVal) = boolean("true").unwrap();
+        assert_eq!(LispVal::Boolean(true), x);
+
+        let (_, x): (&str, LispVal) = boolean("false").unwrap();
+        assert_eq!(LispVal::Boolean(false), x);
     }
 }
