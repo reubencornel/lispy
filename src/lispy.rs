@@ -328,7 +328,7 @@ fn eval(expr: &LispVal, env: Rc<RefCell<Environment>>) -> Result<LispVal, LispVa
             parent.clone(),
         )),
         LispVal::BuiltInFunction(name, f) => Ok(LispVal::BuiltInFunction(name.clone(), *f)),
-        _ => unimplemented!(),
+        LispVal::Boolean(b) => Ok(LispVal::Boolean(*b)),
     }
 }
 
